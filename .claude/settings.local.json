@@ -16,7 +16,9 @@
       "Read(//usr/local/lib/node_modules/@anthropic-ai/claude-code/**)",
       "Bash(claude migrate-installer:*)",
       "Bash(timeout:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(git checkout:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []
