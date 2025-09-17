@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version)",
+      "Bash(python3:*)",
+      "WebFetch(domain:ourairports.com)",
+      "WebSearch",
+      "Bash(pip3 install:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:plan.foreflight.com)",
+      "WebFetch(domain:www.ngdc.noaa.gov)",
+      "WebFetch(domain:www.faa.gov)",
+      "WebFetch(domain:skyvector.com)",
+      "Bash(claude doctor)",
+      "Bash(claude --version)",
+      "Read(//usr/local/lib/node_modules/@anthropic-ai/claude-code/**)",
+      "Bash(claude migrate-installer:*)",
+      "Bash(timeout:*)",
+      "Bash(mv:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
