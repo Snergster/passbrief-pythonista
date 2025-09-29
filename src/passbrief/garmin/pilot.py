@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""
-Garmin Pilot Briefing Manager
+"""Garmin Pilot Briefing Manager."""
 
-Handles parsing and extraction of flight plan data from Garmin Pilot briefing PDFs.
-Provides comprehensive file discovery, text extraction, and route analysis capabilities.
+from __future__ import annotations
 
-Features:
-- Multi-path file discovery across iOS/Pythonista file systems
-- PDF text extraction and pattern matching
-- Weather data parsing from briefings
-- Manual input fallbacks for enhanced user experience
-"""
-
-import os
 import glob
+import logging
+import os
 import re
 from datetime import datetime, timedelta
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..io import IOInterface
 
 
 class GarminPilotBriefingManager:
     """Manages parsing of Garmin Pilot flight briefing PDFs."""
 
-    def __init__(self):
+    def __init__(self, io: Optional['IOInterface'] = None):
+        from ..io import ConsoleIO, IOInterface  # Local import to avoid circulars
+
+        self.io: IOInterface = io or ConsoleIO()
+        self.logger = logging.getLogger(__name__)
         self.supported_formats = ['pdf']  # Focus on Garmin Pilot PDFs only
         self.search_paths = [
             os.path.expanduser('~/Documents/Inbox/'),
@@ -35,81 +35,71 @@ class GarminPilotBriefingManager:
         ]
 
     def check_for_briefings(self):
-        """Check for recent Garmin Pilot briefing PDFs with detailed diagnostics"""
+        """Check for recent Garmin Pilot briefing PDFs."""
+
+        self.io.info("Scanning for Garmin Pilot briefing PDFs...")
         flight_files = []
 
-        print("🔍 DIAGNOSTIC MODE: Scanning for Garmin Pilot briefing PDFs...")
-        print("="*60)
+        for search_path in self.search_paths:
+            self.logger.debug("Checking search path: %s", search_path)
+            if not os.path.exists(search_path):
+                self.logger.debug("Path does not exist: %s", search_path)
+                continue
 
-        for i, search_path in enumerate(self.search_paths, 1):
-            print(f"\\n📁 [{i}/{len(self.search_paths)}] Checking: {search_path}")
-            if os.path.exists(search_path):
-                print(f"      ✅ Path exists")
-                try:
-                    files_in_dir = os.listdir(search_path)
-                    print(f"      📄 Total files: {len(files_in_dir)}")
-
-                    if files_in_dir:
-                        print("      📋 Files found:")
-                        for file in sorted(files_in_dir):
-                            file_path = os.path.join(search_path, file)
-                            try:
-                                size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
-                                file_type = "📁" if os.path.isdir(file_path) else "📄"
-                                print(f"         {file_type} {file} ({size} bytes)")
-                            except:
-                                print(f"         📄 {file} (size unknown)")
-
-                except Exception as e:
-                    print(f"      ❌ Error reading directory: {e}")
-
+            try:
                 found_files = self._scan_directory(search_path)
+            except OSError as exc:
+                self.logger.warning("Unable to read %s: %s", search_path, exc)
+                continue
+
+            if found_files:
+                self.logger.debug(
+                    "Found %s briefing file(s) in %s", len(found_files), search_path
+                )
                 flight_files.extend(found_files)
-                if found_files:
-                    print(f"      🎯 Garmin briefing files: {len(found_files)}")
-                    for ff in found_files:
-                        print(f"         🛩️ {os.path.basename(ff)}")
-                else:
-                    print(f"      📭 No Garmin briefing files found")
-            else:
-                print(f"      ❌ Path does not exist")
 
-        print(f"\\n🗂️ Current working directory: {os.getcwd()}")
+        # Current working directory
         try:
-            current_dir_files = os.listdir('.')
-            print(f"   📄 Files in current directory: {len(current_dir_files)}")
-            for file in sorted(current_dir_files):
-                if any(file.lower().endswith(ext) for ext in self.supported_formats):
-                    print(f"      ✈️ {file}")
-                    abs_path = os.path.abspath(file)
-                    # Only add if not already found (deduplication)
-                    already_added = False
-                    for existing_file in flight_files:
-                        if os.path.abspath(existing_file) == abs_path:
-                            already_added = True
-                            break
-                    if not already_added:
-                        flight_files.append(abs_path)  # Use absolute path consistently
-        except Exception as e:
-            print(f"   ❌ Error reading current directory: {e}")
+            cwd_briefings = [
+                os.path.abspath(file)
+                for file in os.listdir('.')
+                if any(file.lower().endswith(ext) for ext in self.supported_formats)
+            ]
+            if cwd_briefings:
+                self.logger.debug(
+                    "Found %s briefing file(s) in current directory", len(cwd_briefings)
+                )
+                flight_files.extend(cwd_briefings)
+        except OSError as exc:
+            self.logger.warning("Unable to list current directory: %s", exc)
 
-        print("="*60)
+        # Deduplicate while preserving order
+        seen = set()
+        unique_files = []
+        for file_path in flight_files:
+            abs_path = os.path.abspath(file_path)
+            if abs_path not in seen:
+                seen.add(abs_path)
+                unique_files.append(abs_path)
+        flight_files = unique_files
 
         if not flight_files:
-            print("🔍 No Garmin Pilot briefing files found automatically.")
+            self.io.info("No Garmin Pilot briefing files found automatically.")
             manual_file = self._check_manual_file_input()
             if manual_file:
                 flight_files.append(manual_file)
 
         parsed_flights = []
         for file_path in flight_files:
-            print(f"\\n🔄 Attempting to parse: {file_path}")
+            self.io.info(f"Parsing Garmin Pilot briefing: {file_path}")
             flight_data = self.parse_briefing(file_path)
             if flight_data:
-                print(f"   ✅ Successfully parsed: {flight_data['departure']} → {flight_data['arrival']}")
+                self.io.info(
+                    f"Loaded briefing {flight_data['departure']} → {flight_data['arrival']}"
+                )
                 parsed_flights.append(flight_data)
             else:
-                print(f"   ❌ Failed to parse file")
+                self.io.warning(f"Failed to parse briefing file: {file_path}")
 
         return sorted(parsed_flights, key=lambda x: x.get('file_modified', 0), reverse=True)
 
@@ -133,57 +123,57 @@ class GarminPilotBriefingManager:
         return flight_files
 
     def _check_manual_file_input(self):
-        """Allow user to manually specify a file path"""
-        print("\\n📁 MANUAL FILE LOCATION:")
-        print("   💡 Can't find your Garmin Pilot briefing? Let's locate it manually!")
-        print("   📋 Options:")
-        print("      1. Enter full file path")
-        print("      2. Just enter filename (we'll search everywhere)")
-        print("      3. Skip file import (continue with manual entry)")
+        """Allow user to manually specify a file path."""
 
-        choice = input("\\n   Choose option (1-3) [3]: ").strip() or "3"
+        self.io.info("Manual Garmin Pilot briefing selection")
+        self.io.info("  1. Enter full file path")
+        self.io.info("  2. Enter filename (search standard locations)")
+        self.io.info("  3. Skip file import")
+
+        choice = self.io.prompt("Choose option (1-3)", "3")
 
         if choice == "3":
             return None
-        elif choice == "2":
-            filename = input("   Enter filename (e.g., 'MyRoute.gpx'): ").strip()
+        if choice == "2":
+            filename = self.io.prompt("Filename (e.g., briefing.pdf)").strip()
             if filename:
-                print(f"   🔍 Searching for '{filename}' in all locations...")
+                self.io.info(f"Searching for '{filename}' across known paths...")
                 for search_path in self.search_paths:
-                    if os.path.exists(search_path):
-                        try:
-                            for root, dirs, files in os.walk(search_path):
-                                if filename in files:
-                                    full_path = os.path.join(root, filename)
-                                    print(f"   ✅ Found file: {full_path}")
-                                    return full_path
-                        except:
-                            pass
+                    if not os.path.exists(search_path):
+                        continue
+                    try:
+                        for root, _, files in os.walk(search_path):
+                            if filename in files:
+                                full_path = os.path.join(root, filename)
+                                self.io.info(f"Found briefing: {full_path}")
+                                return full_path
+                    except OSError as exc:
+                        self.logger.debug("Error scanning %s: %s", search_path, exc)
 
                 if os.path.exists(filename):
-                    print(f"   ✅ Found file in current directory: {filename}")
+                    self.io.info(f"Found briefing in current directory: {filename}")
                     return filename
 
-                print(f"   ❌ File '{filename}' not found in any location")
-                return None
-        else:
-            file_path = input("   Enter full file path: ").strip()
-            if file_path:
-                if os.path.exists(file_path):
-                    print(f"   ✅ File found: {file_path}")
-                    return file_path
-                else:
-                    print(f"   ❌ File not found: {file_path}")
-                    dirname = os.path.dirname(file_path) or '.'
-                    if os.path.exists(dirname):
-                        print(f"   📁 Files in {dirname}:")
-                        try:
-                            for f in os.listdir(dirname):
-                                print(f"      - {f}")
-                        except:
-                            pass
-                    return None
+                self.io.warning(f"File '{filename}' not found in standard locations")
+            return None
 
+        file_path = self.io.prompt("Full file path").strip()
+        if not file_path:
+            return None
+
+        if os.path.exists(file_path):
+            self.io.info(f"File found: {file_path}")
+            return file_path
+
+        self.io.warning(f"File not found: {file_path}")
+        dirname = os.path.dirname(file_path) or '.'
+        if os.path.exists(dirname):
+            self.io.info(f"Files in {dirname}:")
+            try:
+                for entry in os.listdir(dirname):
+                    self.io.info(f"  - {entry}")
+            except OSError as exc:
+                self.logger.debug("Unable to list %s: %s", dirname, exc)
         return None
 
     def parse_briefing(self, file_path):
@@ -192,10 +182,11 @@ class GarminPilotBriefingManager:
             if file_path.lower().endswith('.pdf'):
                 return self._parse_pdf_briefing(file_path)
             else:
-                print(f"⚠️ Unsupported file format. Only Garmin Pilot PDFs are supported.")
+                self.io.warning("Unsupported file format. Only Garmin Pilot PDFs are supported.")
                 return None
-        except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+        except Exception as exc:
+            self.logger.exception("Error parsing %s", file_path)
+            self.io.error(f"Unable to parse briefing {file_path}: {exc}")
 
         return None
 
@@ -205,19 +196,20 @@ class GarminPilotBriefingManager:
         Extracts route, weather hazards, winds aloft, METARs, TAFs, NOTAMs, TFRs
         """
         filename = os.path.basename(file_path)
-        print(f"📄 Parsing comprehensive flight briefing: {filename}")
+        self.logger.info("Parsing comprehensive flight briefing: %s", filename)
 
         try:
             # Try to extract actual text from PDF first
+            self.logger.debug("Attempting to extract text from PDF %s", filename)
             pdf_text = self._extract_pdf_text(file_path)
             if pdf_text:
                 return self._parse_pdf_text_content(file_path, filename, pdf_text)
             else:
-                print("⚠️ Could not extract text from PDF - using manual input fallback")
+                self.logger.info("Could not extract text from PDF; falling back to manual parsing")
                 return self._parse_generic_pdf_briefing(file_path, filename)
 
-        except Exception as e:
-            print(f"⚠️ PDF parsing error: {e}")
+        except Exception as exc:
+            self.logger.warning("PDF parsing error for %s: %s", filename, exc)
             return self._parse_generic_pdf_briefing(file_path, filename)
 
     def _extract_pdf_text(self, file_path):
@@ -226,7 +218,7 @@ class GarminPilotBriefingManager:
         Fallback method when PyPDF2 not available
         """
         try:
-            print(f"📖 Attempting to extract text from PDF...")
+            self.logger.debug("Extracting text from PDF %s", file_path)
 
             # Simple approach: try to extract readable text from PDF binary
             with open(file_path, 'rb') as file:
@@ -258,19 +250,19 @@ class GarminPilotBriefingManager:
                     'extracted_patterns': extracted_info
                 }
 
-            except Exception as e:
-                print(f"⚠️ Text extraction failed: {e}")
+            except Exception as exc:
+                self.logger.warning("Text extraction failed for %s: %s", file_path, exc)
                 return None
 
-        except Exception as e:
-            print(f"⚠️ Could not read PDF file: {e}")
+        except Exception as exc:
+            self.logger.warning("Could not read PDF file %s: %s", file_path, exc)
             return None
 
     def _parse_pdf_text_content(self, file_path, filename, pdf_data):
         """
         Parse extracted PDF text to find flight plan information
         """
-        print(f"🔍 Analyzing extracted PDF content for flight information...")
+        self.logger.debug("Analyzing extracted PDF content for %s", filename)
 
         raw_text = pdf_data.get('raw_text', '')
         extracted_patterns = pdf_data.get('extracted_patterns', {})
@@ -285,7 +277,9 @@ class GarminPilotBriefingManager:
         airport_codes = re.findall(r'\\b([A-Z]{4})\\b', raw_text)
         airport_codes = [code for code in airport_codes if code.startswith('K')]  # US airports
 
-        print(f"   🛩️ Found potential airport codes: {airport_codes[:10]}...")  # Show first 10
+        self.logger.debug(
+            "Potential airport codes detected: %s", airport_codes[:10]
+        )
 
         if len(airport_codes) >= 2:
             departure = airport_codes[0]
@@ -314,28 +308,34 @@ class GarminPilotBriefingManager:
             'note': f'Extracted from PDF: {departure} → {arrival}'
         }
 
-        print(f"   ✅ Extracted flight plan: {departure} → {arrival}")
+        self.logger.info("Extracted flight plan %s → %s", departure, arrival)
         return flight_plan
 
     def _prompt_for_airports_from_pdf(self, found_codes):
-        """
-        Interactive prompt when automatic extraction needs help
-        """
-        print(f"\\n🛩️ FLIGHT PLAN EXTRACTION ASSISTANCE")
-        print(f"   Found these potential airport codes: {found_codes}")
-        print(f"   💡 If you can see the route clearly in your PDF, please enter it manually")
+        """Interactive prompt when automatic extraction needs help."""
 
-        departure = input(f"   Departure airport [first guess: {found_codes[0] if found_codes else 'UNKNOWN'}]: ").strip().upper()
-        if not departure:
-            departure = found_codes[0] if found_codes else 'UNKNOWN'
+        self.io.info("Flight plan extraction assistance")
+        self.io.info(f"  Potential airport codes: {found_codes}")
+        self.io.info("  Provide corrections if you can verify the route")
 
-        arrival = input(f"   Arrival airport [last guess: {found_codes[-1] if found_codes else 'UNKNOWN'}]: ").strip().upper()
-        if not arrival:
-            arrival = found_codes[-1] if found_codes else 'UNKNOWN'
+        default_departure = found_codes[0] if found_codes else 'UNKNOWN'
+        default_arrival = found_codes[-1] if found_codes else 'UNKNOWN'
 
-        # Also prompt for route if airports were found
+        departure = self.io.prompt(
+            f"Departure airport [default {default_departure}]",
+            default_departure,
+        ).strip().upper()
+
+        arrival = self.io.prompt(
+            f"Arrival airport [default {default_arrival}]",
+            default_arrival,
+        ).strip().upper()
+
         if departure != 'UNKNOWN' and arrival != 'UNKNOWN':
-            route = input(f"   Route waypoints (e.g., {departure} DUFEE ELX HAAKK {arrival}) [optional]: ").strip().upper()
+            route = self.io.prompt(
+                f"Route waypoints (e.g., {departure} DUFEE ELX HAAKK {arrival}) [optional]",
+                "",
+            ).strip().upper()
             return departure, arrival, route if route else 'UNKNOWN'
 
         return departure, arrival, 'UNKNOWN'
@@ -387,7 +387,7 @@ class GarminPilotBriefingManager:
 
     def _parse_garmin_pilot_briefing(self, file_path, filename):
         """Parse Garmin Pilot comprehensive briefing with rich weather data"""
-        print(f"🛩️ Detected Garmin Pilot briefing - extracting comprehensive data")
+        self.logger.info("Detected Garmin Pilot comprehensive briefing %s", filename)
 
         # Based on the PDF content you provided, extract the rich briefing data
         flight_plan = {
@@ -480,9 +480,16 @@ class GarminPilotBriefingManager:
             ]
         }
 
-        print(f"✅ Extracted comprehensive Garmin briefing: {flight_plan['departure']} → {flight_plan['arrival']}")
-        print(f"   📊 {len(flight_plan['tfrs'])} TFRs, {len(flight_plan['convective_sigmets'])} SIGMETs")
-        print(f"   🌪️ Weather hazards: Thunderstorms, mountain obscuration, firefighting TFRs")
+        self.logger.info(
+            "Extracted comprehensive Garmin briefing %s → %s",
+            flight_plan['departure'],
+            flight_plan['arrival'],
+        )
+        self.logger.debug(
+            "Briefing hazards: %s TFRs, %s SIGMETs",
+            len(flight_plan['tfrs']),
+            len(flight_plan['convective_sigmets']),
+        )
 
         return flight_plan
 
@@ -491,7 +498,7 @@ class GarminPilotBriefingManager:
         route_match = re.search(r'([A-Z]{4})\\s+to\\s+([A-Z]{4})', filename)
 
         if not route_match:
-            print(f"⚠️ Could not extract route from filename: {filename}")
+            self.logger.warning("Could not extract route from filename: %s", filename)
             return None
 
         departure = route_match.group(1)
@@ -515,11 +522,11 @@ class GarminPilotBriefingManager:
 
     def _parse_generic_pdf_briefing(self, file_path, filename):
         """Generic PDF briefing parser with manual input fallback"""
-        print(f"📋 PDF text extraction failed - requesting manual input for flight plan")
-        print(f"   File: {filename}")
+        self.io.info("PDF text extraction failed - manual flight plan input required")
+        self.io.info(f"  File: {filename}")
 
-        departure = input("   🛫 Departure airport (e.g., KSLC): ").strip().upper()
-        arrival = input("   🛬 Arrival airport (e.g., KBZN): ").strip().upper()
+        departure = self.io.prompt("Departure airport (e.g., KSLC)").strip().upper()
+        arrival = self.io.prompt("Arrival airport (e.g., KBZN)").strip().upper()
 
         if not departure:
             departure = 'UNKNOWN'

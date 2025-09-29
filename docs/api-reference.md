@@ -256,7 +256,8 @@ print(f"Crosswind: {components['crosswind']} kt")
 ```python
 from passbrief import WeatherManager
 
-weather = WeatherManager.fetch_metar("KSLC")
+weather_manager = WeatherManager()
+weather = weather_manager.fetch_metar("KSLC")
 if weather:
     print(f"Temperature: {weather['temp_c']}°C")
     print(f"Wind: {weather['wind_dir']}°/{weather['wind_speed']}kt")

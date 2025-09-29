@@ -31,6 +31,19 @@ from .performance import EMBEDDED_SR22T_PERFORMANCE, PerformanceCalculator
 # Weather data
 from .weather import WeatherManager
 
+# Shared utilities
+from .io import ConsoleIO, IOInterface
+from .logging_utils import setup_logging
+from .models import (
+    ClimbGradientSummary,
+    LandingPerformance,
+    ManualWeatherPrompt,
+    PerformanceSummary,
+    TakeoffPerformance,
+    WeatherSnapshot,
+    WindComponents,
+)
+
 # Airport data with magnetic variation
 from .airports import AirportManager
 
@@ -57,6 +70,8 @@ __all__ = [
 
     # Weather
     'WeatherManager',
+    'WeatherSnapshot',
+    'ManualWeatherPrompt',
 
     # Airports
     'AirportManager',
@@ -69,7 +84,17 @@ __all__ = [
     'CAPSManager',
     'FlavorTextManager',
     'ChatGPTAnalysisManager',
-    'BriefingGenerator'
+    'BriefingGenerator',
+
+    # Utilities
+    'ConsoleIO',
+    'IOInterface',
+    'setup_logging',
+    'WindComponents',
+    'ClimbGradientSummary',
+    'TakeoffPerformance',
+    'LandingPerformance',
+    'PerformanceSummary',
 ]
 
 # Version info

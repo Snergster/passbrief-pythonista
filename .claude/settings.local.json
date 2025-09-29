@@ -18,7 +18,8 @@
       "Bash(timeout:*)",
       "Bash(mv:*)",
       "Bash(git checkout:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

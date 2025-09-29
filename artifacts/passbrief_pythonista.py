@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PassBrief - SR22T Flight Briefing Tool for Pythonista iOS
-Single-file deployment generated on 2025-09-17 12:39:33
+Single-file deployment generated on 2025-09-18 06:25:18
 
 A comprehensive departure/arrival briefing tool designed for Cirrus SR22T aircraft operations.
 Optimized for Pythonista iOS with all modules combined for easy deployment.
@@ -657,32 +657,22 @@ EMBEDDED_SR22T_PERFORMANCE = {
 }
 
 #!/usr/bin/env python3
-"""
-Performance Calculator for SR22T Aircraft
+"""Performance Calculator for SR22T Aircraft."""
 
-SAFETY-CRITICAL AVIATION COMPONENT:
+from __future__ import annotations
 
-WHY THIS CLASS EXISTS:
-The PerformanceCalculator handles all flight performance calculations for the SR22T.
-These calculations are SAFETY CRITICAL - incorrect results could lead to runway overruns,
-inadequate climb performance, or other dangerous situations.
-
-ARCHITECTURE DECISION: Centralized performance calculations
-- All aviation calculations in one place for consistency and testing
-- Uses embedded POH (Pilot's Operating Handbook) data for accuracy
-- Implements proper altitude corrections (pressure altitude, density altitude)
-- Handles wind component analysis for runway performance
-
-AVIATION CONTEXT BASICS:
-- Pressure Altitude: What the altimeter reads when set to 29.92" (standard)
-- Density Altitude: How the airplane "feels" the altitude based on temperature
-- Higher density altitude = worse performance (longer takeoff, reduced climb)
-- Wind components: Headwind helps performance, crosswind adds complexity
-
-TESTING STRATEGY: Verify all calculations with known aviation formulas
-"""
-
+import logging
 import math
+
+from ..models import (
+    ClimbGradientSummary,
+    LandingPerformance,
+    TakeoffPerformance,
+    WindComponents,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PerformanceCalculator:
@@ -717,7 +707,7 @@ class PerformanceCalculator:
         # Standard pressure altitude formula - aviation standard since ICAO adoption
         pa = field_elevation_ft + (29.92 - altimeter_inhg) * 1000
 
-        print("Pressure altitude: " + str(round(pa, 0)) + " ft")
+        LOGGER.debug("Pressure altitude: %.0f ft", pa)
 
         # Round to nearest 10 ft for performance table interpolation
         # WHY ROUNDING: POH tables use 10 ft increments, enables accurate interpolation
@@ -745,7 +735,7 @@ class PerformanceCalculator:
         expected_rounded = round(expected / 10) * 10
         assert result == expected_rounded, f"Low pressure test failed: expected {expected_rounded}, got {result}"
 
-        print("✅ Pressure altitude calculation tests passed")
+        LOGGER.debug("Pressure altitude calculation tests passed")
 
     def calculate_isa_temp(self, pressure_altitude_ft):
         """
@@ -788,7 +778,7 @@ class PerformanceCalculator:
         expected = 15 - 2 * (5000 / 1000)  # Should be 5°C
         assert result == expected, f"5000 ft ISA test failed: expected {expected}°C, got {result}"
 
-        print("✅ ISA temperature calculation tests passed")
+        LOGGER.debug("ISA temperature calculation tests passed")
 
     def calculate_density_altitude(self, pressure_altitude_ft, oat_c, field_elevation_ft):
         """
@@ -823,7 +813,7 @@ class PerformanceCalculator:
         # 120 ft per degree C deviation from ISA is aviation standard
         density_altitude = pressure_altitude_ft + 120 * (oat_c - isa_temp)
 
-        print("Density altitude: " + str(round(density_altitude, 0)) + " ft")
+        LOGGER.debug("Density altitude: %.0f ft", density_altitude)
 
         # Round to nearest 50 ft for performance calculations
         # WHY 50 FT: Provides reasonable precision without false accuracy
@@ -856,7 +846,7 @@ class PerformanceCalculator:
         expected_rounded = round(expected / 50) * 50
         assert result == expected_rounded, f"Cold day test failed: expected {expected_rounded}, got {result}"
 
-        print("✅ Density altitude calculation tests passed")
+        LOGGER.debug("Density altitude calculation tests passed")
 
     def calculate_wind_components(self, runway_heading, wind_dir, wind_speed):
         """
@@ -889,7 +879,7 @@ class PerformanceCalculator:
         try:
             # Handle variable wind direction (VRB in METAR)
             if isinstance(wind_dir, str) and wind_dir.upper() == 'VRB':
-                print(f"Variable wind direction - using runway heading for calculation")
+                LOGGER.info("Variable wind direction detected; assuming runway-aligned wind")
                 wind_dir = runway_heading  # Treat as headwind for performance calculations
             else:
                 wind_dir = int(wind_dir)
@@ -897,7 +887,12 @@ class PerformanceCalculator:
             wind_speed = int(wind_speed)
             runway_heading = int(runway_heading)
         except (ValueError, TypeError):
-            print(f"Error: Invalid wind data - wind_dir: {wind_dir}, wind_speed: {wind_speed}, runway_heading: {runway_heading}")
+            LOGGER.error(
+                "Invalid wind data (dir=%s, speed=%s, runway=%s)",
+                wind_dir,
+                wind_speed,
+                runway_heading,
+            )
             # Return zero wind as fallback
             return {
                 'headwind': 0,
@@ -929,23 +924,27 @@ class PerformanceCalculator:
         # Check SR22T crosswind limits (POH data: max demonstrated 21 kt)
         crosswind_exceeds_limits = abs_crosswind > 21
         if crosswind_exceeds_limits:
-            print(f"🚨 CROSSWIND EXCEEDS LIMITS: {abs_crosswind:.0f} kt > 21 kt max demonstrated")
-            print("   Runway may not be suitable for SR22T operations")
+            LOGGER.warning(
+                "Crosswind exceeds demonstrated limit: %.0f kt > 21 kt",
+                abs_crosswind,
+            )
 
         # Issue warnings for conditions requiring increased heading accuracy
         # WHY WARNINGS: High winds amplify small heading errors into large performance errors
         if wind_speed >= 20:
-            print(f"⚠️ Strong winds detected ({wind_speed} kt) - verify magnetic heading accuracy")
+            LOGGER.info("Strong winds detected (%s kt) - verify runway heading accuracy", wind_speed)
         elif abs_crosswind >= 10:
-            print(f"⚠️ Significant crosswind ({abs_crosswind:.0f} kt) - verify magnetic heading accuracy")
-
-        return {
-            'headwind': round(headwind),                    # Positive=headwind, negative=tailwind
-            'crosswind': round(abs_crosswind),             # Always positive magnitude
-            'crosswind_direction': 'right' if crosswind > 0 else 'left',  # Direction for pilot awareness
-            'is_tailwind': headwind < 0,                   # Boolean flag for performance chart selection
-            'crosswind_exceeds_limits': crosswind_exceeds_limits  # Boolean flag for runway suitability
-        }
+            LOGGER.info(
+                "Significant crosswind (%.0f kt) - verify runway heading accuracy",
+                abs_crosswind,
+            )
+        return WindComponents(
+            headwind=round(headwind),
+            crosswind=round(abs_crosswind),
+            crosswind_direction='right' if crosswind > 0 else 'left',
+            is_tailwind=headwind < 0,
+            crosswind_exceeds_limits=crosswind_exceeds_limits,
+        )
 
     def _test_wind_component_calculation(self):
         """
@@ -983,7 +982,7 @@ class PerformanceCalculator:
         assert abs(result['headwind']) < 1, f"Angle normalization headwind test failed"
         assert result['crosswind'] == 10, f"Angle normalization crosswind test failed"
 
-        print("✅ Wind component calculation tests passed")
+        LOGGER.debug("Wind component calculation tests passed")
 
     def check_runway_surface_suitability(self, surface_type):
         """
@@ -1016,9 +1015,9 @@ class PerformanceCalculator:
         is_soft_surface = any(soft in surface_lower for soft in soft_surfaces)
 
         if is_soft_surface:
-            print(f"🚨 SOFT FIELD DETECTED: {surface_type}")
-            print("   Performance calculations assume hard surface runway")
-            print("   Soft field operations require pilot evaluation and different techniques")
+            LOGGER.warning("Soft field detected: %s", surface_type)
+            LOGGER.warning("Performance calculations assume a hard surface runway")
+            LOGGER.warning("Soft field operations require pilot evaluation and different techniques")
             return {
                 'suitable_for_standard_performance': False,
                 'surface_type': surface_type,
@@ -1035,8 +1034,8 @@ class PerformanceCalculator:
             }
         else:
             # Unknown surface type - conservative approach
-            print(f"⚠️ UNKNOWN SURFACE TYPE: {surface_type}")
-            print("   Assuming hard surface but recommend pilot verification")
+            LOGGER.info("Unknown surface type: %s", surface_type)
+            LOGGER.info("Assuming hard surface but recommend pilot verification")
             return {
                 'suitable_for_standard_performance': True,
                 'surface_type': surface_type,
@@ -1086,35 +1085,47 @@ class PerformanceCalculator:
         gs_91 = tas_91 - headwind_kt
         gs_120 = tas_120 - headwind_kt
 
-        print("Climb calculations:")
-        print("  91 KIAS: " + str(round(tas_91, 1)) + " KTAS, " + str(round(gs_91, 1)) + " kt GS")
-        print("  120 KIAS: " + str(round(tas_120, 1)) + " KTAS, " + str(round(gs_120, 1)) + " kt GS")
+        LOGGER.debug(
+            "Climb calculations: 91 KIAS %.1f KTAS / %.1f GS, 120 KIAS %.1f KTAS / %.1f GS",
+            tas_91,
+            gs_91,
+            tas_120,
+            gs_120,
+        )
 
         # Interpolate climb gradients from POH data with error handling
         # WHY TRY/EXCEPT: POH data may not cover extreme conditions, graceful degradation required
         try:
-            gradient_91 = self._interpolate_climb_gradient(pressure_altitude_ft, temperature_c, 'takeoff_climb_gradient_91')
-            print("  91 KIAS gradient: " + str(round(gradient_91, 0)) + " ft/NM")
+            gradient_91 = self._interpolate_climb_gradient(
+                pressure_altitude_ft,
+                temperature_c,
+                'takeoff_climb_gradient_91'
+            )
+            LOGGER.debug("91 KIAS gradient: %.0f ft/NM", gradient_91)
         except Exception as e:
             gradient_91 = None
-            print("  91 KIAS gradient error: " + str(e))
+            LOGGER.warning("Failed to interpolate 91 KIAS gradient: %s", e)
 
         try:
-            gradient_120 = self._interpolate_climb_gradient(pressure_altitude_ft, temperature_c, 'enroute_climb_gradient_120')
-            print("  120 KIAS gradient: " + str(round(gradient_120, 0)) + " ft/NM (POH data)")
+            gradient_120 = self._interpolate_climb_gradient(
+                pressure_altitude_ft,
+                temperature_c,
+                'enroute_climb_gradient_120'
+            )
+            LOGGER.debug("120 KIAS gradient: %.0f ft/NM (POH)", gradient_120)
         except Exception as e:
             gradient_120 = None
-            print("  120 KIAS gradient error: " + str(e))
+            LOGGER.warning("Failed to interpolate 120 KIAS gradient: %s", e)
 
-        return {
-            'tas_91': round(tas_91, 1),      # True airspeed at 91 KIAS
-            'gs_91': round(gs_91, 1),        # Ground speed at 91 KIAS
-            'gradient_91': gradient_91,      # Climb gradient at 91 KIAS (ft/NM)
-            'tas_120': round(tas_120, 1),    # True airspeed at 120 KIAS
-            'gs_120': round(gs_120, 1),      # Ground speed at 120 KIAS
-            'gradient_120': gradient_120,    # Climb gradient at 120 KIAS (ft/NM)
-            'climb_rate_91kias': gradient_91 # Store for CAPS calculations
-        }
+        return ClimbGradientSummary(
+            tas_91=round(tas_91, 1),
+            gs_91=round(gs_91, 1),
+            gradient_91=gradient_91,
+            tas_120=round(tas_120, 1),
+            gs_120=round(gs_120, 1),
+            gradient_120=gradient_120,
+            climb_rate_91kias=gradient_91,
+        )
 
     def _test_climb_gradient_calculation(self):
         """
@@ -1147,7 +1158,7 @@ class PerformanceCalculator:
         # Ground speed should be 10 kt less with 10 kt headwind
         assert result_headwind['gs_91'] == result_no_wind['gs_91'] - 10, f"Headwind ground speed calculation failed"
 
-        print("✅ Climb gradient calculation tests passed")
+        LOGGER.debug("Climb gradient calculation tests passed")
 
     def _interpolate_climb_gradient(self, pressure_altitude, temperature, gradient_type):
         """
@@ -1265,20 +1276,26 @@ class PerformanceCalculator:
         low_data = next(c for c in perf_data if c['pressure_altitude_ft'] == pa_low)
         high_data = next(c for c in perf_data if c['pressure_altitude_ft'] == pa_high)
 
-        result = {}
+        metrics = {}
         for metric in ['ground_roll_ft', 'total_distance_ft']:
             low_val = self._interpolate_temperature(temperature, low_data['performance'], metric)
             high_val = self._interpolate_temperature(temperature, high_data['performance'], metric)
 
             if pa_low == pa_high:
-                result[metric] = low_val
+                interpolated = low_val
             else:
                 pa_fraction = (pressure_altitude - pa_low) / (pa_high - pa_low)
-                result[metric] = low_val + pa_fraction * (high_val - low_val)
+                interpolated = low_val + pa_fraction * (high_val - low_val)
 
-            result[metric] = round(result[metric] / Config.PERFORMANCE_DISTANCE_ROUND) * Config.PERFORMANCE_DISTANCE_ROUND
+            metrics[metric] = round(
+                interpolated / Config.PERFORMANCE_DISTANCE_ROUND
+            ) * Config.PERFORMANCE_DISTANCE_ROUND
 
-        return result
+        performance_cls = TakeoffPerformance if performance_type == 'takeoff_distance' else LandingPerformance
+        return performance_cls(
+            ground_roll_ft=int(metrics['ground_roll_ft']),
+            total_distance_ft=int(metrics['total_distance_ft']),
+        )
 
     def _interpolate_temperature(self, temperature, temp_data, metric):
         """Interpolate across temperature"""
@@ -1327,57 +1344,35 @@ class PerformanceCalculator:
         TESTING PHILOSOPHY: Test safety-critical calculations comprehensively,
         skip trivial operations that don't affect flight safety.
         """
-        print("\\n" + "="*60)
-        print("🔬 RUNNING SAFETY-CRITICAL PERFORMANCE CALCULATOR TESTS")
-        print("="*60)
-        print("Testing all aviation calculations that affect flight safety...")
-        print("These tests verify pressure altitude, density altitude, wind components,")
-        print("and climb gradient calculations against known aviation formulas.")
-        print("\\n⚠️  If any test fails, DO NOT USE for flight planning!")
-        print("-"*60)
-
         try:
             # Test pressure altitude calculations (affects all performance lookups)
-            print("\\n1️⃣ Testing Pressure Altitude Calculations...")
+            LOGGER.info("Testing pressure altitude calculations")
             self._test_pressure_altitude_calculation()
 
             # Test ISA temperature calculations (used in density altitude)
-            print("\\n2️⃣ Testing ISA Temperature Calculations...")
+            LOGGER.info("Testing ISA temperature calculations")
             self._test_isa_temperature_calculation()
 
             # Test density altitude calculations (affects aircraft performance)
-            print("\\n3️⃣ Testing Density Altitude Calculations...")
+            LOGGER.info("Testing density altitude calculations")
             self._test_density_altitude_calculation()
 
             # Test wind component calculations (affects runway performance)
-            print("\\n4️⃣ Testing Wind Component Calculations...")
+            LOGGER.info("Testing wind component calculations")
             self._test_wind_component_calculation()
 
             # Test climb gradient calculations (affects obstacle clearance)
-            print("\\n5️⃣ Testing Climb Gradient Calculations...")
+            LOGGER.info("Testing climb gradient calculations")
             self._test_climb_gradient_calculation()
 
-            print("\\n" + "="*60)
-            print("✅ ALL SAFETY-CRITICAL TESTS PASSED!")
-            print("✈️ Performance calculator is ready for flight planning use.")
-            print("🔬 " + str(5) + " test categories completed successfully.")
-            print("="*60)
+            LOGGER.info("All safety-critical performance calculator tests passed")
 
         except AssertionError as e:
-            print("\\n" + "🚨"*20)
-            print("❌ SAFETY-CRITICAL TEST FAILURE!")
-            print(f"💥 Test failed: {e}")
-            print("⛔ DO NOT USE CALCULATOR FOR FLIGHT PLANNING!")
-            print("🔧 Fix the issue before using this tool for aviation.")
-            print("🚨"*20)
+            LOGGER.error("Safety-critical test failure: %s", e)
             raise
 
         except Exception as e:
-            print("\\n" + "⚠️ "*20)
-            print("❓ UNEXPECTED TEST ERROR!")
-            print(f"💥 Error: {e}")
-            print("🔍 Check implementation for bugs.")
-            print("⚠️ "*20)
+            LOGGER.exception("Unexpected test error: %s", e)
             raise
 
     def calculate_v_speeds(self, wind_dir, wind_speed, wind_gust=None, aircraft_weight_lb=3600):
@@ -1459,11 +1454,11 @@ class PerformanceCalculator:
         if gust_correction > 0:
             speed_control_guidance.append(f"Gust Correction: +{gust_correction} kt added for {gust_factor} kt gust factor")
 
-        print(f"🎯 V-speeds calculated for SR22T operations")
+        LOGGER.info("Calculated V-speeds for SR22T operations")
         if gust_correction > 0:
-            print(f"   💨 Wind: {wind_speed}G{wind_gust} kt - gust correction applied")
+            LOGGER.info("Wind %sG%s kt - gust correction applied", wind_speed, wind_gust)
         if use_partial_flaps:
-            print(f"   🌪️ Crosswind detected - 50% flaps recommended")
+            LOGGER.info("Crosswind detected - 50%% flaps recommended")
 
         return {
             # Takeoff speeds
@@ -1489,96 +1484,134 @@ class PerformanceCalculator:
             'estimated_crosswind_kt': round(estimated_crosswind, 1)
         }
 
+
 # ========================================
 # EXTERNAL DATA INTEGRATION
 # ========================================
 
 #!/usr/bin/env python3
-"""
-Weather Manager for SR22T Briefing Tool
+"""Weather management and acquisition services."""
 
-Handles METAR data fetching from NOAA Aviation Weather API with:
-- Automatic unit conversion (hPa to inHg)
-- Age validation for stale weather data
-- Manual input fallbacks when API unavailable
-- Comprehensive error handling
-"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
 
 import requests
-from datetime import datetime, timezone
+
+from ..io import ConsoleIO, IOInterface
+from ..models import ManualWeatherPrompt, WeatherSnapshot
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class WeatherManager:
     """Manages weather data fetching and processing."""
 
-    @staticmethod
-    def fetch_metar(icao_code):
-        """Fetch METAR with hPa to inHg conversion"""
+    def __init__(
+        self,
+        session: Optional[requests.Session] = None,
+        io: Optional[IOInterface] = None,
+    ) -> None:
+        self._session = session or requests.Session()
+        self._io = io or ConsoleIO()
+
+    def fetch_metar(self, icao_code: str) -> Optional[WeatherSnapshot]:
+        """Fetch METAR data and return a structured weather snapshot."""
+
+        url = (
+            "https://aviationweather.gov/api/data/metar?ids="
+            f"{icao_code}&format=json&taf=false"
+        )
+
         try:
-            url = "https://aviationweather.gov/api/data/metar?ids=" + icao_code + "&format=json&taf=false"
-            response = requests.get(url, timeout=10)
+            response = self._session.get(url, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:  # pragma: no cover - thin wrapper
+            LOGGER.warning("Weather fetch failed for %s: %s", icao_code, exc)
+            return self.request_manual_weather(icao_code)
 
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    metar_data = data[0]
-
-                    metar_time = datetime.fromisoformat(metar_data['reportTime'].replace('Z', '+00:00'))
-                    current_time = datetime.now(timezone.utc)
-                    age_minutes = (current_time - metar_time).total_seconds() / 60
-
-                    if age_minutes > Config.METAR_MAX_AGE_MINUTES:
-                        return WeatherManager.request_manual_weather()
-
-                    raw_altimeter = metar_data.get('altim', 29.92)
-                    if raw_altimeter > 100:
-                        altimeter_inhg = round(raw_altimeter * 0.02953, 2)
-                        unit_info = "hPa converted to inHg"
-                        print("CONVERTING: " + str(raw_altimeter) + " hPa -> " + str(altimeter_inhg) + " inHg")
-                    else:
-                        altimeter_inhg = round(raw_altimeter, 2)
-                        unit_info = "inHg (no conversion)"
-
-                    return {
-                        'wind_dir': metar_data.get('wdir', 0),
-                        'wind_speed': metar_data.get('wspd', 0),
-                        'temp_c': metar_data.get('temp', 15),
-                        'altimeter': altimeter_inhg,
-                        'altimeter_raw': raw_altimeter,
-                        'altimeter_units': unit_info,
-                        'metar_time': metar_data['reportTime'],
-                        'age_minutes': int(age_minutes),
-                        'source': 'NOAA Aviation Weather'
-                    }
-
-        except Exception as e:
-            print("Weather fetch failed: " + str(e))
-
-        return WeatherManager.request_manual_weather()
-
-    @staticmethod
-    def request_manual_weather():
-        """Request manual weather input"""
-        print("\\nMETAR UNAVAILABLE - Manual input required")
         try:
-            wind_dir = int(input("Wind direction (degrees magnetic): "))
-            wind_speed = int(input("Wind speed (knots): "))
-            temp_c = float(input("Temperature (°C): "))
-            altimeter = float(input("Altimeter setting (inHg): "))
+            data = response.json()
+        except ValueError as exc:  # pragma: no cover - thin wrapper
+            LOGGER.warning("Invalid weather payload for %s: %s", icao_code, exc)
+            return self.request_manual_weather(icao_code)
 
-            return {
-                'wind_dir': wind_dir,
-                'wind_speed': wind_speed,
-                'temp_c': temp_c,
-                'altimeter': altimeter,
-                'altimeter_raw': altimeter,
-                'altimeter_units': 'Manual input (inHg)',
-                'metar_time': 'Manual Input',
-                'age_minutes': 0,
-                'source': 'Manual Input'
-            }
-        except:
+        if not data:
+            LOGGER.warning("No METAR data returned for %s", icao_code)
+            return self.request_manual_weather(icao_code)
+
+        metar_data = data[0]
+        metar_time = datetime.fromisoformat(metar_data["reportTime"].replace("Z", "+00:00"))
+        current_time = datetime.now(timezone.utc)
+        age_minutes = int((current_time - metar_time).total_seconds() / 60)
+
+        if age_minutes > Config.METAR_MAX_AGE_MINUTES:
+            LOGGER.info(
+                "Discarding stale METAR for %s (age=%s min)",
+                icao_code,
+                age_minutes,
+            )
+            return self.request_manual_weather(icao_code)
+
+        raw_altimeter = float(metar_data.get("altim", 29.92))
+        if raw_altimeter > 100:
+            altimeter_inhg = round(raw_altimeter * 0.02953, 2)
+            unit_info = "hPa converted to inHg"
+            LOGGER.debug(
+                "Converted altimeter %s hPa to %s inHg for %s",
+                raw_altimeter,
+                altimeter_inhg,
+                icao_code,
+            )
+        else:
+            altimeter_inhg = round(raw_altimeter, 2)
+            unit_info = "inHg (no conversion)"
+
+        return WeatherSnapshot(
+            station=icao_code,
+            observed_at=metar_time,
+            age_minutes=age_minutes,
+            wind_dir=int(metar_data.get("wdir", 0) or 0),
+            wind_speed=int(metar_data.get("wspd", 0) or 0),
+            temperature_c=float(metar_data.get("temp", 15) or 15),
+            altimeter_inhg=altimeter_inhg,
+            raw_altimeter=raw_altimeter,
+            altimeter_units=unit_info,
+            source="NOAA Aviation Weather",
+        )
+
+    def request_manual_weather(self, station: str) -> Optional[WeatherSnapshot]:
+        """Collect manual weather input when METAR data is unavailable."""
+
+        self._io.warning(f"METAR unavailable for {station} - manual input required")
+        try:
+            prompt = ManualWeatherPrompt(
+                wind_dir=int(self._io.prompt("Wind direction (degrees magnetic)", "0")),
+                wind_speed=int(self._io.prompt("Wind speed (knots)", "0")),
+                temperature_c=float(self._io.prompt("Temperature (°C)", "15")),
+                altimeter_inhg=float(self._io.prompt("Altimeter setting (inHg)", "29.92")),
+            )
+        except ValueError:
+            self._io.error("Invalid manual weather input; aborting weather collection")
             return None
+
+        observed_at = datetime.now(timezone.utc)
+        return WeatherSnapshot(
+            station=station,
+            observed_at=observed_at,
+            age_minutes=0,
+            wind_dir=prompt.wind_dir,
+            wind_speed=prompt.wind_speed,
+            temperature_c=prompt.temperature_c,
+            altimeter_inhg=prompt.altimeter_inhg,
+            raw_altimeter=prompt.altimeter_inhg,
+            altimeter_units="Manual input (inHg)",
+            source="Manual Input",
+        )
+
 
 #!/usr/bin/env python3
 """
@@ -1605,16 +1638,27 @@ WHERE: Positive variation = East (subtract from true to get magnetic)
        Negative variation = West (add to true to get magnetic)
 """
 
+from __future__ import annotations
+
+import csv
+import logging
 import requests
 import time
 from datetime import datetime
+from io import StringIO
+from typing import Optional
 
+from ..io import ConsoleIO
+
+
+LOGGER = logging.getLogger(__name__)
 
 class AirportManager:
     """Manages airport and runway data with accurate magnetic variation handling."""
 
     # Class variable to track magnetic variation data source
     _last_mag_var_source = 'UNKNOWN'
+    _io = ConsoleIO()
 
     @staticmethod
     def _calculate_magnetic_variation(lat, lon, date=None):
@@ -1667,9 +1711,9 @@ class AirportManager:
             for attempt in range(2):
                 try:
                     if attempt == 0:
-                        print(f"   🌐 Requesting WMM2025 data from NOAA API...")
+                        AirportManager._io.info(f"   🌐 Requesting WMM2025 data from NOAA API...")
                     else:
-                        print(f"   🔄 Retrying NOAA API (attempt {attempt + 1}/2)...")
+                        AirportManager._io.info(f"   🔄 Retrying NOAA API (attempt {attempt + 1}/2)...")
 
                     response = requests.get(api_url, params=params, timeout=5)
 
@@ -1677,7 +1721,7 @@ class AirportManager:
                         data = response.json()
                         if 'result' in data and len(data['result']) > 0:
                             declination = data['result'][0]['declination']
-                            print(f"   🧭 Using NOAA WMM2025: Magnetic declination {declination:+.2f}° at {lat:.3f}, {lon:.3f}")
+                            AirportManager._io.info(f"   🧭 Using NOAA WMM2025: Magnetic declination {declination:+.2f}° at {lat:.3f}, {lon:.3f}")
                             # Store source for automatic heading calculations
                             AirportManager._last_mag_var_source = 'NOAA_WMM'
                             return declination
@@ -1688,29 +1732,29 @@ class AirportManager:
 
                 except requests.exceptions.Timeout:
                     if attempt == 0:
-                        print(f"   ⏱️ API timeout (5s) - retrying...")
+                        AirportManager._io.info(f"   ⏱️ API timeout (5s) - retrying...")
                         time.sleep(1)  # Brief pause before retry
                     else:
                         raise Exception("API timeout after 2 attempts")
 
                 except Exception as api_error:
                     if attempt == 0:
-                        print(f"   ⚠️ API error: {api_error} - retrying...")
+                        AirportManager._io.info(f"   ⚠️ API error: {api_error} - retrying...")
                         time.sleep(1)  # Brief pause before retry
                     else:
                         raise Exception(f"API failed after 2 attempts: {api_error}")
 
         except Exception as e:
-            print(f"   ❌ NOAA WMM API unavailable after retries - falling back to manual input")
-            print(f"   🔍 Error: {e}")
+            AirportManager._io.info(f"   ❌ NOAA WMM API unavailable after retries - falling back to manual input")
+            AirportManager._io.info(f"   🔍 Error: {e}")
 
         # TIER 2: Manual input from pilot using NOAA calculator
-        print(f"   📍 Location: {lat:.4f}, {lon:.4f}")
-        print(f"   💡 Get accurate value from: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml")
+        AirportManager._io.info(f"   📍 Location: {lat:.4f}, {lon:.4f}")
+        AirportManager._io.info(f"   💡 Get accurate value from: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml")
 
         try:
-            user_mag_var = float(input(f"   Enter magnetic variation for this location (degrees, + for East, - for West): "))
-            print(f"   🧭 Using Manual Input: Magnetic declination {user_mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
+            user_mag_var = float(AirportManager._io.prompt(f"   Enter magnetic variation for this location (degrees, + for East, - for West): "))
+            AirportManager._io.info(f"   🧭 Using Manual Input: Magnetic declination {user_mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
             # Store source for heading calculations
             AirportManager._last_mag_var_source = 'MANUAL_INPUT'
             return user_mag_var
@@ -1763,9 +1807,9 @@ class AirportManager:
         # WHY CLAMP: Prevents obviously wrong results from calculation errors
         mag_var = max(-25, min(20, mag_var))  # CONUS variation range is roughly -20° to +17°
 
-        print(f"   ⚠️ WARNING: Using regional approximation: {mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
-        print(f"   🚨 For aviation safety, verify with NOAA calculator!")
-        print(f"   📏 Accuracy: ±3-5° (acceptable for low wind, verify for high wind)")
+        AirportManager._io.info(f"   ⚠️ WARNING: Using regional approximation: {mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
+        AirportManager._io.info(f"   🚨 For aviation safety, verify with NOAA calculator!")
+        AirportManager._io.info(f"   📏 Accuracy: ±3-5° (acceptable for low wind, verify for high wind)")
         # Store source for heading calculations
         AirportManager._last_mag_var_source = 'REGIONAL_APPROX'
         return mag_var
@@ -1801,29 +1845,29 @@ class AirportManager:
         try:
             # Auto-use computed magnetic heading when we have accurate NOAA data
             if AirportManager._last_mag_var_source == 'NOAA_WMM':
-                print(f"   ✅ Auto-using accurate magnetic heading: {default_magnetic:03d}° (NOAA WMM data)")
+                AirportManager._io.info(f"   ✅ Auto-using accurate magnetic heading: {default_magnetic:03d}° (NOAA WMM data)")
                 return default_magnetic
             else:
                 # Prompt for verification when using regional approximation or manual input
-                user_input = input(f"Runway {runway} magnetic heading [{default_magnetic:03d}°]: ").strip()
+                user_input = AirportManager._io.prompt(f"Runway {runway} magnetic heading [{default_magnetic:03d}°]: ").strip()
 
                 if not user_input:
                     # User pressed Enter - accept calculated default
-                    print(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
+                    AirportManager._io.info(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
                     return default_magnetic
                 else:
                     # User entered a value - validate and use
                     user_heading = int(user_input)
                     if 0 <= user_heading <= 360:
-                        print(f"   ✅ Using pilot-verified magnetic heading: {user_heading:03d}°")
+                        AirportManager._io.info(f"   ✅ Using pilot-verified magnetic heading: {user_heading:03d}°")
                         return user_heading
                     else:
-                        print(f"   ⚠️ Invalid heading {user_heading}°, using calculated {default_magnetic:03d}°")
+                        AirportManager._io.info(f"   ⚠️ Invalid heading {user_heading}°, using calculated {default_magnetic:03d}°")
                         return default_magnetic
 
         except (ValueError, EOFError):
             # Handle input errors gracefully
-            print(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
+            AirportManager._io.info(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
             return default_magnetic
 
     @staticmethod
@@ -1876,7 +1920,7 @@ class AirportManager:
         where TRUE and MAGNETIC headings were mixed. These tests verify the conversion
         formulas work correctly with known magnetic variation values.
         """
-        print("🧭 Testing magnetic variation conversion formulas...")
+        AirportManager._io.info("🧭 Testing magnetic variation conversion formulas...")
 
         # Test case 1: Eastern US location (negative/westerly variation)
         # Known: Boston area has approximately -14° variation
@@ -1934,7 +1978,7 @@ class AirportManager:
             var = AirportManager._regional_approximation(lat, lon)
             assert -25 <= var <= 20, f"Variation {var}° outside CONUS bounds at {lat}, {lon}"
 
-        print("✅ Magnetic variation system tests passed")
+        AirportManager._io.info("✅ Magnetic variation system tests passed")
 
     def run_magnetic_variation_tests(self):
         """
@@ -1947,44 +1991,44 @@ class AirportManager:
         USAGE: Call this method to verify magnetic variation calculations
         Example: AirportManager().run_magnetic_variation_tests()
         """
-        print("\\n" + "="*60)
-        print("🧭 RUNNING MAGNETIC VARIATION SAFETY TESTS")
-        print("="*60)
-        print("Testing TRUE→MAGNETIC conversion formulas that fix the critical")
-        print("reference system bug (OurAirports TRUE vs METAR MAGNETIC)...")
-        print("\\n⚠️  If any test fails, magnetic heading conversions are incorrect!")
-        print("-"*60)
+        AirportManager._io.info("\\n" + "="*60)
+        AirportManager._io.info("🧭 RUNNING MAGNETIC VARIATION SAFETY TESTS")
+        AirportManager._io.info("="*60)
+        AirportManager._io.info("Testing TRUE→MAGNETIC conversion formulas that fix the critical")
+        AirportManager._io.info("reference system bug (OurAirports TRUE vs METAR MAGNETIC)...")
+        AirportManager._io.info("\\n⚠️  If any test fails, magnetic heading conversions are incorrect!")
+        AirportManager._io.info("-"*60)
 
         try:
             self._test_magnetic_variation_system()
 
-            print("\\n" + "="*60)
-            print("✅ ALL MAGNETIC VARIATION TESTS PASSED!")
-            print("🧭 TRUE→MAGNETIC conversion system is working correctly.")
-            print("🔒 Mixed reference system bug is properly fixed.")
-            print("="*60)
+            AirportManager._io.info("\\n" + "="*60)
+            AirportManager._io.info("✅ ALL MAGNETIC VARIATION TESTS PASSED!")
+            AirportManager._io.info("🧭 TRUE→MAGNETIC conversion system is working correctly.")
+            AirportManager._io.info("🔒 Mixed reference system bug is properly fixed.")
+            AirportManager._io.info("="*60)
 
         except AssertionError as e:
-            print("\\n" + "🚨"*20)
-            print("❌ MAGNETIC VARIATION TEST FAILURE!")
-            print(f"💥 Test failed: {e}")
-            print("⛔ TRUE→MAGNETIC conversions are incorrect!")
-            print("🔧 Fix magnetic variation calculations before use!")
-            print("🚨"*20)
+            AirportManager._io.info("\\n" + "🚨"*20)
+            AirportManager._io.error("❌ MAGNETIC VARIATION TEST FAILURE!")
+            AirportManager._io.info(f"💥 Test failed: {e}")
+            AirportManager._io.info("⛔ TRUE→MAGNETIC conversions are incorrect!")
+            AirportManager._io.info("🔧 Fix magnetic variation calculations before use!")
+            AirportManager._io.warning("🚨"*20)
             raise
 
         except Exception as e:
-            print("\\n" + "⚠️ "*20)
-            print("❓ MAGNETIC VARIATION TEST ERROR!")
-            print(f"💥 Error: {e}")
-            print("🔍 Check magnetic variation implementation.")
-            print("⚠️ "*20)
+            AirportManager._io.info("\\n" + "⚠️ "*20)
+            AirportManager._io.info("❓ MAGNETIC VARIATION TEST ERROR!")
+            AirportManager._io.info(f"💥 Error: {e}")
+            AirportManager._io.info("🔍 Check magnetic variation implementation.")
+            AirportManager._io.warning("⚠️ "*20)
             raise
 
     @staticmethod
     def get_airport_data(icao, runway):
         """Get airport data with automatic runway lookup"""
-        print(f"\\n🔍 Looking up airport and runway data for {icao} runway {runway}...")
+        AirportManager._io.info(f"\\n🔍 Looking up airport and runway data for {icao} runway {runway}...")
 
         airport_info = AirportManager._fetch_airport_info(icao)
         if not airport_info:
@@ -1999,7 +2043,7 @@ class AirportManager:
                 runway, runway_info['true_heading'], airport_info['mag_var']
             )
 
-            print(f"✅ Using runway {runway}: {runway_info['length']} ft, magnetic heading {accurate_magnetic_heading}°, {runway_info['surface']}")
+            AirportManager._io.info(f"✅ Using runway {runway}: {runway_info['length']} ft, magnetic heading {accurate_magnetic_heading}°, {runway_info['surface']}")
             return {
                 'icao': icao,
                 'name': airport_info['name'],
@@ -2010,7 +2054,7 @@ class AirportManager:
                 'source': 'OurAirports + Verified Magnetic Heading'
             }
         else:
-            print(f"⚠️ Runway {runway} data not found online, requesting manual input...")
+            AirportManager._io.info(f"⚠️ Runway {runway} data not found online, requesting manual input...")
             runway_data = AirportManager._get_runway_data(runway)
             if runway_data:
                 return {
@@ -2029,42 +2073,40 @@ class AirportManager:
     def _fetch_airport_info(icao):
         """Fetch basic airport information"""
         try:
-            print(f"   📡 Fetching airport info from OurAirports...")
+            LOGGER.debug("Fetching airport info from OurAirports")
             response = requests.get("https://davidmegginson.github.io/ourairports-data/airports.csv", timeout=15)
 
             if response.status_code == 200:
-                lines = response.text.split('\\n')
-                for line in lines[1:]:
-                    if line.strip():
-                        data = line.split(',')
-                        if len(data) > 6:
-                            icao_from_csv = data[1].strip().strip('"')
-                            if icao_from_csv == icao:
-                                airport_name = data[3].strip().strip('"')
-                                lat_str = data[4].strip()
-                                lon_str = data[5].strip()
-                                elevation_str = data[6].strip()
+                reader = csv.DictReader(StringIO(response.text))
+                for row in reader:
+                    if not row:
+                        continue
+                    if row.get('ident') == icao:
+                        try:
+                            elevation_ft = int(float(row.get('elevation_ft', '') or 0))
+                            lat = float(row.get('latitude_deg', '') or 0.0)
+                            lon = float(row.get('longitude_deg', '') or 0.0)
+                        except ValueError:
+                            elevation_ft = lat = lon = None
 
-                                try:
-                                    elevation_ft = int(float(elevation_str)) if elevation_str else None
-                                    lat = float(lat_str) if lat_str else None
-                                    lon = float(lon_str) if lon_str else None
-                                except:
-                                    elevation_ft = lat = lon = None
-
-                                if elevation_ft is not None and lat is not None and lon is not None:
-                                    mag_var = AirportManager._calculate_magnetic_variation(lat, lon)
-                                    print(f"   ✅ Found {icao}: {airport_name}, elevation {elevation_ft} ft")
-                                    return {
-                                        'name': airport_name,
-                                        'elevation_ft': elevation_ft,
-                                        'lat': lat,
-                                        'lon': lon,
-                                        'mag_var': mag_var
-                                    }
+                        if elevation_ft is not None and lat is not None and lon is not None:
+                            mag_var = AirportManager._calculate_magnetic_variation(lat, lon)
+                            LOGGER.info(
+                                "Found %s: %s, elevation %s ft",
+                                icao,
+                                row.get('name', 'Unknown Airport'),
+                                elevation_ft,
+                            )
+                            return {
+                                'name': row.get('name', 'Unknown Airport'),
+                                'elevation_ft': elevation_ft,
+                                'lat': lat,
+                                'lon': lon,
+                                'mag_var': mag_var
+                            }
 
         except Exception as e:
-            print(f"   ❌ Airport lookup failed: {e}")
+            LOGGER.warning("Airport lookup failed: %s", e)
 
         return None
 
@@ -2081,7 +2123,7 @@ class AirportManager:
     def _fetch_ourairports_runway_data(icao, runway, mag_var):
         """Attempt to fetch runway data from OurAirports runways.csv and convert to magnetic heading"""
         try:
-            print(f"   📡 Trying OurAirports runways database...")
+            AirportManager._io.info(f"   📡 Trying OurAirports runways database...")
             response = requests.get("https://davidmegginson.github.io/ourairports-data/runways.csv", timeout=15)
 
             if response.status_code == 200:
@@ -2135,7 +2177,7 @@ class AirportManager:
                                                 if not surface_clean or surface_clean.lower() in ['', 'unknown']:
                                                     surface_clean = 'Asphalt'
 
-                                                print(f"   ✅ Found runway {runway}: {length_ft} ft, {true_heading}°T→{magnetic_heading}°M, {surface_clean}")
+                                                AirportManager._io.info(f"   ✅ Found runway {runway}: {length_ft} ft, {true_heading}°T→{magnetic_heading}°M, {surface_clean}")
                                                 return {
                                                     'length': length_ft,
                                                     'true_heading': true_heading,  # Keep original true heading
@@ -2148,18 +2190,18 @@ class AirportManager:
                             continue
 
         except Exception as e:
-            print(f"   ⚠️ OurAirports runway lookup failed: {e}")
+            AirportManager._io.info(f"   ⚠️ OurAirports runway lookup failed: {e}")
 
         return None
 
     @staticmethod
     def _get_runway_data(runway):
         """Get runway data manually"""
-        print(f"\\nManual runway {runway} data entry:")
+        AirportManager._io.info(f"\\nManual runway {runway} data entry:")
         try:
-            length = int(input("Length (ft): "))
-            heading = int(input("Magnetic heading: "))
-            surface = input("Surface [Asphalt]: ") or "Asphalt"
+            length = int(AirportManager._io.prompt("Length (ft): "))
+            heading = int(AirportManager._io.prompt("Magnetic heading: "))
+            surface = AirportManager._io.prompt("Surface [Asphalt]: ") or "Asphalt"
             return {'length': length, 'heading': heading, 'surface': surface}
         except:
             return None
@@ -2167,13 +2209,13 @@ class AirportManager:
     @staticmethod
     def _get_manual_data(icao, runway):
         """Get all data manually"""
-        print(f"\\nFull manual entry for {icao}:")
+        AirportManager._io.info(f"\\nFull manual entry for {icao}:")
         try:
-            name = input("Airport name: ") or icao + " Airport"
-            elevation = int(input("Field elevation (ft): "))
-            length = int(input(f"Runway {runway} length (ft): "))
-            heading = int(input(f"Runway {runway} heading: "))
-            surface = input("Surface [Asphalt]: ") or "Asphalt"
+            name = AirportManager._io.prompt("Airport name: ") or icao + " Airport"
+            elevation = int(AirportManager._io.prompt("Field elevation (ft): "))
+            length = int(AirportManager._io.prompt(f"Runway {runway} length (ft): "))
+            heading = int(AirportManager._io.prompt(f"Runway {runway} heading: "))
+            surface = AirportManager._io.prompt("Surface [Asphalt]: ") or "Asphalt"
 
             return {
                 'icao': icao, 'name': name, 'elevation_ft': elevation,
@@ -2183,30 +2225,31 @@ class AirportManager:
         except:
             return None
 
+
 #!/usr/bin/env python3
-"""
-Garmin Pilot Briefing Manager
+"""Garmin Pilot Briefing Manager."""
 
-Handles parsing and extraction of flight plan data from Garmin Pilot briefing PDFs.
-Provides comprehensive file discovery, text extraction, and route analysis capabilities.
+from __future__ import annotations
 
-Features:
-- Multi-path file discovery across iOS/Pythonista file systems
-- PDF text extraction and pattern matching
-- Weather data parsing from briefings
-- Manual input fallbacks for enhanced user experience
-"""
-
-import os
 import glob
+import logging
+import os
 import re
 from datetime import datetime, timedelta
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..io import IOInterface
 
 
 class GarminPilotBriefingManager:
     """Manages parsing of Garmin Pilot flight briefing PDFs."""
 
-    def __init__(self):
+    def __init__(self, io: Optional['IOInterface'] = None):
+        from ..io import ConsoleIO, IOInterface  # Local import to avoid circulars
+
+        self.io: IOInterface = io or ConsoleIO()
+        self.logger = logging.getLogger(__name__)
         self.supported_formats = ['pdf']  # Focus on Garmin Pilot PDFs only
         self.search_paths = [
             os.path.expanduser('~/Documents/Inbox/'),
@@ -2220,81 +2263,71 @@ class GarminPilotBriefingManager:
         ]
 
     def check_for_briefings(self):
-        """Check for recent Garmin Pilot briefing PDFs with detailed diagnostics"""
+        """Check for recent Garmin Pilot briefing PDFs."""
+
+        self.io.info("Scanning for Garmin Pilot briefing PDFs...")
         flight_files = []
 
-        print("🔍 DIAGNOSTIC MODE: Scanning for Garmin Pilot briefing PDFs...")
-        print("="*60)
+        for search_path in self.search_paths:
+            self.logger.debug("Checking search path: %s", search_path)
+            if not os.path.exists(search_path):
+                self.logger.debug("Path does not exist: %s", search_path)
+                continue
 
-        for i, search_path in enumerate(self.search_paths, 1):
-            print(f"\\n📁 [{i}/{len(self.search_paths)}] Checking: {search_path}")
-            if os.path.exists(search_path):
-                print(f"      ✅ Path exists")
-                try:
-                    files_in_dir = os.listdir(search_path)
-                    print(f"      📄 Total files: {len(files_in_dir)}")
-
-                    if files_in_dir:
-                        print("      📋 Files found:")
-                        for file in sorted(files_in_dir):
-                            file_path = os.path.join(search_path, file)
-                            try:
-                                size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
-                                file_type = "📁" if os.path.isdir(file_path) else "📄"
-                                print(f"         {file_type} {file} ({size} bytes)")
-                            except:
-                                print(f"         📄 {file} (size unknown)")
-
-                except Exception as e:
-                    print(f"      ❌ Error reading directory: {e}")
-
+            try:
                 found_files = self._scan_directory(search_path)
+            except OSError as exc:
+                self.logger.warning("Unable to read %s: %s", search_path, exc)
+                continue
+
+            if found_files:
+                self.logger.debug(
+                    "Found %s briefing file(s) in %s", len(found_files), search_path
+                )
                 flight_files.extend(found_files)
-                if found_files:
-                    print(f"      🎯 Garmin briefing files: {len(found_files)}")
-                    for ff in found_files:
-                        print(f"         🛩️ {os.path.basename(ff)}")
-                else:
-                    print(f"      📭 No Garmin briefing files found")
-            else:
-                print(f"      ❌ Path does not exist")
 
-        print(f"\\n🗂️ Current working directory: {os.getcwd()}")
+        # Current working directory
         try:
-            current_dir_files = os.listdir('.')
-            print(f"   📄 Files in current directory: {len(current_dir_files)}")
-            for file in sorted(current_dir_files):
-                if any(file.lower().endswith(ext) for ext in self.supported_formats):
-                    print(f"      ✈️ {file}")
-                    abs_path = os.path.abspath(file)
-                    # Only add if not already found (deduplication)
-                    already_added = False
-                    for existing_file in flight_files:
-                        if os.path.abspath(existing_file) == abs_path:
-                            already_added = True
-                            break
-                    if not already_added:
-                        flight_files.append(abs_path)  # Use absolute path consistently
-        except Exception as e:
-            print(f"   ❌ Error reading current directory: {e}")
+            cwd_briefings = [
+                os.path.abspath(file)
+                for file in os.listdir('.')
+                if any(file.lower().endswith(ext) for ext in self.supported_formats)
+            ]
+            if cwd_briefings:
+                self.logger.debug(
+                    "Found %s briefing file(s) in current directory", len(cwd_briefings)
+                )
+                flight_files.extend(cwd_briefings)
+        except OSError as exc:
+            self.logger.warning("Unable to list current directory: %s", exc)
 
-        print("="*60)
+        # Deduplicate while preserving order
+        seen = set()
+        unique_files = []
+        for file_path in flight_files:
+            abs_path = os.path.abspath(file_path)
+            if abs_path not in seen:
+                seen.add(abs_path)
+                unique_files.append(abs_path)
+        flight_files = unique_files
 
         if not flight_files:
-            print("🔍 No Garmin Pilot briefing files found automatically.")
+            self.io.info("No Garmin Pilot briefing files found automatically.")
             manual_file = self._check_manual_file_input()
             if manual_file:
                 flight_files.append(manual_file)
 
         parsed_flights = []
         for file_path in flight_files:
-            print(f"\\n🔄 Attempting to parse: {file_path}")
+            self.io.info(f"Parsing Garmin Pilot briefing: {file_path}")
             flight_data = self.parse_briefing(file_path)
             if flight_data:
-                print(f"   ✅ Successfully parsed: {flight_data['departure']} → {flight_data['arrival']}")
+                self.io.info(
+                    f"Loaded briefing {flight_data['departure']} → {flight_data['arrival']}"
+                )
                 parsed_flights.append(flight_data)
             else:
-                print(f"   ❌ Failed to parse file")
+                self.io.warning(f"Failed to parse briefing file: {file_path}")
 
         return sorted(parsed_flights, key=lambda x: x.get('file_modified', 0), reverse=True)
 
@@ -2317,57 +2350,57 @@ class GarminPilotBriefingManager:
         return flight_files
 
     def _check_manual_file_input(self):
-        """Allow user to manually specify a file path"""
-        print("\\n📁 MANUAL FILE LOCATION:")
-        print("   💡 Can't find your Garmin Pilot briefing? Let's locate it manually!")
-        print("   📋 Options:")
-        print("      1. Enter full file path")
-        print("      2. Just enter filename (we'll search everywhere)")
-        print("      3. Skip file import (continue with manual entry)")
+        """Allow user to manually specify a file path."""
 
-        choice = input("\\n   Choose option (1-3) [3]: ").strip() or "3"
+        self.io.info("Manual Garmin Pilot briefing selection")
+        self.io.info("  1. Enter full file path")
+        self.io.info("  2. Enter filename (search standard locations)")
+        self.io.info("  3. Skip file import")
+
+        choice = self.io.prompt("Choose option (1-3)", "3")
 
         if choice == "3":
             return None
-        elif choice == "2":
-            filename = input("   Enter filename (e.g., 'MyRoute.gpx'): ").strip()
+        if choice == "2":
+            filename = self.io.prompt("Filename (e.g., briefing.pdf)").strip()
             if filename:
-                print(f"   🔍 Searching for '{filename}' in all locations...")
+                self.io.info(f"Searching for '{filename}' across known paths...")
                 for search_path in self.search_paths:
-                    if os.path.exists(search_path):
-                        try:
-                            for root, dirs, files in os.walk(search_path):
-                                if filename in files:
-                                    full_path = os.path.join(root, filename)
-                                    print(f"   ✅ Found file: {full_path}")
-                                    return full_path
-                        except:
-                            pass
+                    if not os.path.exists(search_path):
+                        continue
+                    try:
+                        for root, _, files in os.walk(search_path):
+                            if filename in files:
+                                full_path = os.path.join(root, filename)
+                                self.io.info(f"Found briefing: {full_path}")
+                                return full_path
+                    except OSError as exc:
+                        self.logger.debug("Error scanning %s: %s", search_path, exc)
 
                 if os.path.exists(filename):
-                    print(f"   ✅ Found file in current directory: {filename}")
+                    self.io.info(f"Found briefing in current directory: {filename}")
                     return filename
 
-                print(f"   ❌ File '{filename}' not found in any location")
-                return None
-        else:
-            file_path = input("   Enter full file path: ").strip()
-            if file_path:
-                if os.path.exists(file_path):
-                    print(f"   ✅ File found: {file_path}")
-                    return file_path
-                else:
-                    print(f"   ❌ File not found: {file_path}")
-                    dirname = os.path.dirname(file_path) or '.'
-                    if os.path.exists(dirname):
-                        print(f"   📁 Files in {dirname}:")
-                        try:
-                            for f in os.listdir(dirname):
-                                print(f"      - {f}")
-                        except:
-                            pass
-                    return None
+                self.io.warning(f"File '{filename}' not found in standard locations")
+            return None
 
+        file_path = self.io.prompt("Full file path").strip()
+        if not file_path:
+            return None
+
+        if os.path.exists(file_path):
+            self.io.info(f"File found: {file_path}")
+            return file_path
+
+        self.io.warning(f"File not found: {file_path}")
+        dirname = os.path.dirname(file_path) or '.'
+        if os.path.exists(dirname):
+            self.io.info(f"Files in {dirname}:")
+            try:
+                for entry in os.listdir(dirname):
+                    self.io.info(f"  - {entry}")
+            except OSError as exc:
+                self.logger.debug("Unable to list %s: %s", dirname, exc)
         return None
 
     def parse_briefing(self, file_path):
@@ -2376,10 +2409,11 @@ class GarminPilotBriefingManager:
             if file_path.lower().endswith('.pdf'):
                 return self._parse_pdf_briefing(file_path)
             else:
-                print(f"⚠️ Unsupported file format. Only Garmin Pilot PDFs are supported.")
+                self.io.warning("Unsupported file format. Only Garmin Pilot PDFs are supported.")
                 return None
-        except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+        except Exception as exc:
+            self.logger.exception("Error parsing %s", file_path)
+            self.io.error(f"Unable to parse briefing {file_path}: {exc}")
 
         return None
 
@@ -2389,19 +2423,20 @@ class GarminPilotBriefingManager:
         Extracts route, weather hazards, winds aloft, METARs, TAFs, NOTAMs, TFRs
         """
         filename = os.path.basename(file_path)
-        print(f"📄 Parsing comprehensive flight briefing: {filename}")
+        self.logger.info("Parsing comprehensive flight briefing: %s", filename)
 
         try:
             # Try to extract actual text from PDF first
+            self.logger.debug("Attempting to extract text from PDF %s", filename)
             pdf_text = self._extract_pdf_text(file_path)
             if pdf_text:
                 return self._parse_pdf_text_content(file_path, filename, pdf_text)
             else:
-                print("⚠️ Could not extract text from PDF - using manual input fallback")
+                self.logger.info("Could not extract text from PDF; falling back to manual parsing")
                 return self._parse_generic_pdf_briefing(file_path, filename)
 
-        except Exception as e:
-            print(f"⚠️ PDF parsing error: {e}")
+        except Exception as exc:
+            self.logger.warning("PDF parsing error for %s: %s", filename, exc)
             return self._parse_generic_pdf_briefing(file_path, filename)
 
     def _extract_pdf_text(self, file_path):
@@ -2410,7 +2445,7 @@ class GarminPilotBriefingManager:
         Fallback method when PyPDF2 not available
         """
         try:
-            print(f"📖 Attempting to extract text from PDF...")
+            self.logger.debug("Extracting text from PDF %s", file_path)
 
             # Simple approach: try to extract readable text from PDF binary
             with open(file_path, 'rb') as file:
@@ -2442,19 +2477,19 @@ class GarminPilotBriefingManager:
                     'extracted_patterns': extracted_info
                 }
 
-            except Exception as e:
-                print(f"⚠️ Text extraction failed: {e}")
+            except Exception as exc:
+                self.logger.warning("Text extraction failed for %s: %s", file_path, exc)
                 return None
 
-        except Exception as e:
-            print(f"⚠️ Could not read PDF file: {e}")
+        except Exception as exc:
+            self.logger.warning("Could not read PDF file %s: %s", file_path, exc)
             return None
 
     def _parse_pdf_text_content(self, file_path, filename, pdf_data):
         """
         Parse extracted PDF text to find flight plan information
         """
-        print(f"🔍 Analyzing extracted PDF content for flight information...")
+        self.logger.debug("Analyzing extracted PDF content for %s", filename)
 
         raw_text = pdf_data.get('raw_text', '')
         extracted_patterns = pdf_data.get('extracted_patterns', {})
@@ -2469,7 +2504,9 @@ class GarminPilotBriefingManager:
         airport_codes = re.findall(r'\\b([A-Z]{4})\\b', raw_text)
         airport_codes = [code for code in airport_codes if code.startswith('K')]  # US airports
 
-        print(f"   🛩️ Found potential airport codes: {airport_codes[:10]}...")  # Show first 10
+        self.logger.debug(
+            "Potential airport codes detected: %s", airport_codes[:10]
+        )
 
         if len(airport_codes) >= 2:
             departure = airport_codes[0]
@@ -2498,28 +2535,34 @@ class GarminPilotBriefingManager:
             'note': f'Extracted from PDF: {departure} → {arrival}'
         }
 
-        print(f"   ✅ Extracted flight plan: {departure} → {arrival}")
+        self.logger.info("Extracted flight plan %s → %s", departure, arrival)
         return flight_plan
 
     def _prompt_for_airports_from_pdf(self, found_codes):
-        """
-        Interactive prompt when automatic extraction needs help
-        """
-        print(f"\\n🛩️ FLIGHT PLAN EXTRACTION ASSISTANCE")
-        print(f"   Found these potential airport codes: {found_codes}")
-        print(f"   💡 If you can see the route clearly in your PDF, please enter it manually")
+        """Interactive prompt when automatic extraction needs help."""
 
-        departure = input(f"   Departure airport [first guess: {found_codes[0] if found_codes else 'UNKNOWN'}]: ").strip().upper()
-        if not departure:
-            departure = found_codes[0] if found_codes else 'UNKNOWN'
+        self.io.info("Flight plan extraction assistance")
+        self.io.info(f"  Potential airport codes: {found_codes}")
+        self.io.info("  Provide corrections if you can verify the route")
 
-        arrival = input(f"   Arrival airport [last guess: {found_codes[-1] if found_codes else 'UNKNOWN'}]: ").strip().upper()
-        if not arrival:
-            arrival = found_codes[-1] if found_codes else 'UNKNOWN'
+        default_departure = found_codes[0] if found_codes else 'UNKNOWN'
+        default_arrival = found_codes[-1] if found_codes else 'UNKNOWN'
 
-        # Also prompt for route if airports were found
+        departure = self.io.prompt(
+            f"Departure airport [default {default_departure}]",
+            default_departure,
+        ).strip().upper()
+
+        arrival = self.io.prompt(
+            f"Arrival airport [default {default_arrival}]",
+            default_arrival,
+        ).strip().upper()
+
         if departure != 'UNKNOWN' and arrival != 'UNKNOWN':
-            route = input(f"   Route waypoints (e.g., {departure} DUFEE ELX HAAKK {arrival}) [optional]: ").strip().upper()
+            route = self.io.prompt(
+                f"Route waypoints (e.g., {departure} DUFEE ELX HAAKK {arrival}) [optional]",
+                "",
+            ).strip().upper()
             return departure, arrival, route if route else 'UNKNOWN'
 
         return departure, arrival, 'UNKNOWN'
@@ -2571,7 +2614,7 @@ class GarminPilotBriefingManager:
 
     def _parse_garmin_pilot_briefing(self, file_path, filename):
         """Parse Garmin Pilot comprehensive briefing with rich weather data"""
-        print(f"🛩️ Detected Garmin Pilot briefing - extracting comprehensive data")
+        self.logger.info("Detected Garmin Pilot comprehensive briefing %s", filename)
 
         # Based on the PDF content you provided, extract the rich briefing data
         flight_plan = {
@@ -2664,9 +2707,16 @@ class GarminPilotBriefingManager:
             ]
         }
 
-        print(f"✅ Extracted comprehensive Garmin briefing: {flight_plan['departure']} → {flight_plan['arrival']}")
-        print(f"   📊 {len(flight_plan['tfrs'])} TFRs, {len(flight_plan['convective_sigmets'])} SIGMETs")
-        print(f"   🌪️ Weather hazards: Thunderstorms, mountain obscuration, firefighting TFRs")
+        self.logger.info(
+            "Extracted comprehensive Garmin briefing %s → %s",
+            flight_plan['departure'],
+            flight_plan['arrival'],
+        )
+        self.logger.debug(
+            "Briefing hazards: %s TFRs, %s SIGMETs",
+            len(flight_plan['tfrs']),
+            len(flight_plan['convective_sigmets']),
+        )
 
         return flight_plan
 
@@ -2675,7 +2725,7 @@ class GarminPilotBriefingManager:
         route_match = re.search(r'([A-Z]{4})\\s+to\\s+([A-Z]{4})', filename)
 
         if not route_match:
-            print(f"⚠️ Could not extract route from filename: {filename}")
+            self.logger.warning("Could not extract route from filename: %s", filename)
             return None
 
         departure = route_match.group(1)
@@ -2699,11 +2749,11 @@ class GarminPilotBriefingManager:
 
     def _parse_generic_pdf_briefing(self, file_path, filename):
         """Generic PDF briefing parser with manual input fallback"""
-        print(f"📋 PDF text extraction failed - requesting manual input for flight plan")
-        print(f"   File: {filename}")
+        self.io.info("PDF text extraction failed - manual flight plan input required")
+        self.io.info(f"  File: {filename}")
 
-        departure = input("   🛫 Departure airport (e.g., KSLC): ").strip().upper()
-        arrival = input("   🛬 Arrival airport (e.g., KBZN): ").strip().upper()
+        departure = self.io.prompt("Departure airport (e.g., KSLC)").strip().upper()
+        arrival = self.io.prompt("Arrival airport (e.g., KBZN)").strip().upper()
 
         if not departure:
             departure = 'UNKNOWN'
@@ -2772,6 +2822,7 @@ class GarminPilotBriefingManager:
             '18000': '290/30kt',
             '24000': '300/35kt'
         }
+
 
 # ========================================
 # BRIEFING GENERATION COMPONENTS
@@ -3673,16 +3724,23 @@ This is the primary class that coordinates all briefing generation activities.
 It provides a workflow-based interface for comprehensive flight preparation.
 """
 
+import logging
+import logging
 import math
 from datetime import datetime
+from typing import Optional
 
 # Import all required modules
+from ..io import ConsoleIO, IOInterface
 
 
 class BriefingGenerator:
-    def __init__(self):
+    def __init__(self, io: Optional[IOInterface] = None):
+        self.io = io or ConsoleIO()
+        self.logger = logging.getLogger(__name__)
         self.calculator = PerformanceCalculator()
-        self.garmin_manager = GarminPilotBriefingManager()
+        self.garmin_manager = GarminPilotBriefingManager(io=self.io)
+        self.weather_manager = WeatherManager(io=self.io)
         self.sid_manager = SIDManager()
         self.caps_manager = CAPSManager()
         self.flavor_text_manager = FlavorTextManager()
@@ -3692,6 +3750,24 @@ class BriefingGenerator:
         self.current_briefing_data = None
         self.weather_analysis_results = None
         self.passenger_brief_results = None
+
+    # ------------------------------------------------------------------
+    # IO helpers
+    # ------------------------------------------------------------------
+    def _prompt(self, message: str, default: str = "") -> str:
+        return self.io.prompt(message, default)
+
+    def _confirm(self, message: str, default: bool = False) -> bool:
+        return self.io.confirm(message, default)
+
+    def _info(self, message: str = "") -> None:
+        self.io.info(message)
+
+    def _warn(self, message: str) -> None:
+        self.io.warning(message)
+
+    def _error(self, message: str) -> None:
+        self.io.error(message)
         
     @staticmethod
     def _normalize_runway_input(runway_input):
@@ -3714,16 +3790,16 @@ class BriefingGenerator:
         
     def get_user_inputs(self):
         """Workflow-based briefing system for comprehensive flight preparation"""
-        print("\n" + "="*70)
-        print("SR22T FLIGHT BRIEFING TOOL v31.0 - WORKFLOW EDITION")
-        print("Garmin Pilot Integration + Sequential Briefing System")
-        print("="*70)
+        self._info("\n" + "=" * 70)
+        self._info("SR22T FLIGHT BRIEFING TOOL v31.0 - WORKFLOW EDITION")
+        self._info("Garmin Pilot Integration + Sequential Briefing System")
+        self._info("=" * 70)
         
         # Check for Garmin Pilot briefings
         recent_briefings = self.garmin_manager.check_for_briefings()
         
         if recent_briefings:
-            print(f"\n🎉 Found {len(recent_briefings)} Garmin Pilot briefing(s):")
+            self._info(f"\n🎉 Found {len(recent_briefings)} Garmin Pilot briefing(s):")
             for i, briefing in enumerate(recent_briefings):
                 file_timestamp = datetime.fromtimestamp(briefing['file_modified'])
                 file_age = datetime.now() - file_timestamp
@@ -3737,11 +3813,15 @@ class BriefingGenerator:
                 
                 date_str = file_timestamp.strftime("%m/%d %H:%M")
                 
-                print(f"  {i+1}. {briefing['departure']} → {briefing['arrival']}")
-                print(f"     📅 {date_str} ({age_str}) | 📄 {briefing['type']} | 📁 {briefing['filename']}")
-            
-            print(f"\nSelect Garmin Pilot briefing (1-{len(recent_briefings)}) or continue without: ")
-            choice = input("Choice (1-{}, ENTER to skip): ".format(len(recent_briefings))).strip()
+                self._info(f"  {i+1}. {briefing['departure']} → {briefing['arrival']}")
+                self._info(f"     📅 {date_str} ({age_str}) | 📄 {briefing['type']} | 📁 {briefing['filename']}")
+
+            self._info(
+                f"\nSelect Garmin Pilot briefing (1-{len(recent_briefings)}) or continue without: "
+            )
+            choice = self._prompt(
+                f"Choice (1-{len(recent_briefings)}, ENTER to skip)", ""
+            ).strip()
             
             if choice.isdigit() and 1 <= int(choice) <= len(recent_briefings):
                 selected_briefing = recent_briefings[int(choice)-1]
@@ -3749,17 +3829,19 @@ class BriefingGenerator:
                 # Handle cases where PDF parsing couldn't extract airport codes
                 if (selected_briefing['departure'] == 'UNKNOWN' or 
                     selected_briefing['arrival'] == 'UNKNOWN'):
-                    print(f"\n🛠️ PDF parsing was incomplete for this briefing.")
-                    print(f"   Current: {selected_briefing['departure']} → {selected_briefing['arrival']}")
-                    print(f"   Please provide the missing information:")
+                    self._info("\n🛠️ PDF parsing was incomplete for this briefing.")
+                    self._info(
+                        f"   Current: {selected_briefing['departure']} → {selected_briefing['arrival']}"
+                    )
+                    self._info("   Please provide the missing information:")
                     
                     if selected_briefing['departure'] == 'UNKNOWN':
-                        dep = input("   🛫 Departure airport: ").strip().upper()
+                        dep = self._prompt("   🛫 Departure airport").strip().upper()
                         if dep:
                             selected_briefing['departure'] = dep
                     
                     if selected_briefing['arrival'] == 'UNKNOWN':
-                        arr = input("   🛬 Arrival airport: ").strip().upper()
+                        arr = self._prompt("   🛬 Arrival airport").strip().upper()
                         if arr:
                             selected_briefing['arrival'] = arr
                     
@@ -3767,130 +3849,135 @@ class BriefingGenerator:
                     if (selected_briefing['departure'] != 'UNKNOWN' and 
                         selected_briefing['arrival'] != 'UNKNOWN' and
                         selected_briefing.get('route') == 'UNKNOWN'):
-                        route = input(f"   🗺️ Route (optional, e.g., {selected_briefing['departure']} WAYPOINT1 WAYPOINT2 {selected_briefing['arrival']}): ").strip().upper()
+                        route = self._prompt(
+                            f"   🗺️ Route (optional, e.g., {selected_briefing['departure']} WAYPOINT1 WAYPOINT2 {selected_briefing['arrival']})",
+                            "",
+                        ).strip().upper()
                         if route:
                             selected_briefing['route'] = route
                 
                 self.current_briefing_data = selected_briefing
-                print(f"✅ Loaded briefing: {selected_briefing['departure']} → {selected_briefing['arrival']}")
+                self._info(
+                    f"✅ Loaded briefing: {selected_briefing['departure']} → {selected_briefing['arrival']}"
+                )
         else:
-            print("\n📝 No Garmin Pilot briefings found")
+            self._info("\n📝 No Garmin Pilot briefings found")
         
         return self._show_workflow_menu()
     
     def _show_workflow_menu(self):
         """Display workflow options and handle user selection"""
-        print("\n" + "-"*70)
+        self._info("\n" + "-" * 70)
         
         if self.current_briefing_data:
             route = f"{self.current_briefing_data['departure']} → {self.current_briefing_data['arrival']}"
-            print(f"Flight: {route} (Garmin Pilot briefing loaded ✓)")
+            self._info(f"Flight: {route} (Garmin Pilot briefing loaded ✓)")
         else:
-            print("Flight: Manual input mode (no Garmin Pilot briefing)")
+            self._info("Flight: Manual input mode (no Garmin Pilot briefing)")
             
-        print("\nWORKLOW MODE:")
+        self._info("\nWORKLOW MODE:")
         status_weather = "✅" if self.weather_analysis_results else "⏸️"
         status_passenger = "✅" if self.passenger_brief_results else ("⏸️" if self.weather_analysis_results else "⏹️")
         status_takeoff = "⏸️"
         status_arrival = "⏸️"
         
-        print(f"  {status_weather} 1. Weather/Route Analysis    (T-15min before passengers)")
-        print(f"  {status_passenger} 2. Passenger Briefing        (When passengers arrive)")  
-        print(f"  {status_takeoff} 3. Takeoff Briefing          (Runup area/after clearance)")
-        print(f"  {status_arrival} 4. Arrival Briefing          (Approaching destination)")
+        self._info(f"  {status_weather} 1. Weather/Route Analysis    (T-15min before passengers)")
+        self._info(f"  {status_passenger} 2. Passenger Briefing        (When passengers arrive)")  
+        self._info(f"  {status_takeoff} 3. Takeoff Briefing          (Runup area/after clearance)")
+        self._info(f"  {status_arrival} 4. Arrival Briefing          (Approaching destination)")
         
-        print("\nQUICK ACCESS:")
-        print("  A. Weather Analysis Only")
-        print("  B. Passenger Brief Only")
-        print("  C. Takeoff Brief Only")
-        print("  D. Arrival Brief Only")
-        print("  E. Full Sequential Workflow")
-        print("  Q. Quit")
+        self._info("\nQUICK ACCESS:")
+        self._info("  A. Weather Analysis Only")
+        self._info("  B. Passenger Brief Only")
+        self._info("  C. Takeoff Brief Only")
+        self._info("  D. Arrival Brief Only")
+        self._info("  E. Full Sequential Workflow")
+        self._info("  Q. Quit")
         
-        choice = input("\nSelect briefing type (1-4, A-E, Q): ").strip().upper()
-        
-        if choice == '1':
-            return self._weather_analysis_workflow()
-        elif choice == '2':
-            return self._passenger_briefing_workflow()
-        elif choice == '3':
-            return self._takeoff_briefing_workflow()
-        elif choice == '4':
-            return self._arrival_briefing_workflow()
-        elif choice == 'A':
-            return self._weather_analysis_workflow()
-        elif choice == 'B':
-            return self._passenger_briefing_workflow()
-        elif choice == 'C':
-            return self._takeoff_briefing_workflow()
-        elif choice == 'D':
-            return self._arrival_briefing_workflow()
-        elif choice == 'E':
-            return self._full_sequential_workflow()
-        elif choice == 'Q':
-            return None
-        else:
-            print("Invalid choice. Please try again.")
-            return self._show_workflow_menu()
+        while True:
+            choice = self._prompt("Select briefing type (1-4, A-E, Q)").strip().upper()
+
+            if choice == '1':
+                return self._weather_analysis_workflow()
+            if choice == '2':
+                return self._passenger_briefing_workflow()
+            if choice == '3':
+                return self._takeoff_briefing_workflow()
+            if choice == '4':
+                return self._arrival_briefing_workflow()
+            if choice == 'A':
+                return self._weather_analysis_workflow()
+            if choice == 'B':
+                return self._passenger_briefing_workflow()
+            if choice == 'C':
+                return self._takeoff_briefing_workflow()
+            if choice == 'D':
+                return self._arrival_briefing_workflow()
+            if choice == 'E':
+                return self._full_sequential_workflow()
+            if choice == 'Q' or choice == '':
+                return None
+
+            self._warn("Invalid choice. Please try again.")
     
     def _weather_analysis_workflow(self):
         """Weather and route analysis using Garmin Pilot data (T-15min before passengers)"""
-        print("\n" + "="*50)
-        print("🌤️  WEATHER & ROUTE ANALYSIS")
-        print("="*50)
+        self._info("\n" + "="*50)
+        self._info("🌤️  WEATHER & ROUTE ANALYSIS")
+        self._info("="*50)
         
         if not self.current_briefing_data:
-            print("⚠️ No Garmin Pilot briefing loaded")
-            print("This analysis requires Garmin Pilot briefing data for comprehensive weather analysis")
-            input("Press ENTER to return to menu...")
+            self._warn("⚠️ No Garmin Pilot briefing loaded")
+            self._info("This analysis requires Garmin Pilot briefing data for comprehensive weather analysis")
+            self._prompt("Press ENTER to return to menu...")
             return self._show_workflow_menu()
         
-        print("🔍 Analyzing Garmin Pilot briefing data...")
+        self._info("🔍 Analyzing Garmin Pilot briefing data...")
         
         try:
             # Use current airport data workflow but with minimal input for weather analysis
             departure = self.current_briefing_data['departure']
             arrival = self.current_briefing_data['arrival']
             
-            print(f"📊 Analyzing weather data for {departure} → {arrival}...")
+            self._info(f"📊 Analyzing weather data for {departure} → {arrival}...")
             
             # Display weather information from the briefing
-            print("\n" + "="*50)
-            print("🌤️  WEATHER & ROUTE ANALYSIS RESULTS")
-            print("="*50)
+            self._info("\n" + "="*50)
+            self._info("🌤️  WEATHER & ROUTE ANALYSIS RESULTS")
+            self._info("="*50)
             
             # Show basic flight information
-            print(f"✈️  **FLIGHT PLAN**")
-            print(f"   Route: {departure} → {arrival}")
+            self._info(f"✈️  **FLIGHT PLAN**")
+            self._info(f"   Route: {departure} → {arrival}")
             if self.current_briefing_data.get('route', 'UNKNOWN') != 'UNKNOWN':
-                print(f"   Waypoints: {self.current_briefing_data['route']}")
+                self._info(f"   Waypoints: {self.current_briefing_data['route']}")
             
             # Show weather summary from PDF extraction
             weather_summary = self.current_briefing_data.get('weather_summary', {})
             if weather_summary:
-                print(f"\n🌦️  **WEATHER HAZARDS DETECTED**")
-                print(f"   {weather_summary.get('summary', 'No weather information available')}")
+                self._info(f"\n🌦️  **WEATHER HAZARDS DETECTED**")
+                self._info(f"   {weather_summary.get('summary', 'No weather information available')}")
                 
                 if weather_summary.get('sigmets_found', 0) > 0:
-                    print(f"   ⚠️  {weather_summary['sigmets_found']} SIGMET(s) - Significant weather conditions")
+                    self._info(f"   ⚠️  {weather_summary['sigmets_found']} SIGMET(s) - Significant weather conditions")
                 if weather_summary.get('airmets_found', 0) > 0:
-                    print(f"   ⚠️  {weather_summary['airmets_found']} AIRMET(s) - Hazardous weather for light aircraft")
+                    self._info(f"   ⚠️  {weather_summary['airmets_found']} AIRMET(s) - Hazardous weather for light aircraft")
                 if weather_summary.get('notams_found', 0) > 0:
-                    print(f"   ℹ️  {weather_summary['notams_found']} NOTAM(s) - Airport/airspace notices")
+                    self._info(f"   ℹ️  {weather_summary['notams_found']} NOTAM(s) - Airport/airspace notices")
                 if weather_summary.get('tfrs_found', 0) > 0:
-                    print(f"   🚫 {weather_summary['tfrs_found']} TFR(s) - Temporary flight restrictions")
+                    self._info(f"   🚫 {weather_summary['tfrs_found']} TFR(s) - Temporary flight restrictions")
                 
                 if weather_summary.get('weather_notes'):
-                    print(f"   🌤️  Conditions: {', '.join(weather_summary['weather_notes'])}")
+                    self._info(f"   🌤️  Conditions: {', '.join(weather_summary['weather_notes'])}")
             
             # Optional ChatGPT enhancement if available
             if self.chatgpt_manager.available:
-                print(f"\n🤖 **ENHANCED AI ANALYSIS** (Optional)")
-                print(f"   ChatGPT is available for detailed weather analysis...")
-                enhance = input("   Generate AI weather analysis? (y/n) [n]: ").strip().lower()
+                self._info(f"\n🤖 **ENHANCED AI ANALYSIS** (Optional)")
+                self._info(f"   ChatGPT is available for detailed weather analysis...")
+                enhance = self._prompt("   Generate AI weather analysis? (y/n) [n]: ").strip().lower()
                 
                 if enhance == 'y':
-                    print("   🔄 Generating AI analysis...")
+                    self._info("   🔄 Generating AI analysis...")
                     # Get weather data (this will be minimal for weather analysis)
                     weather_data = {'temp_c': 15, 'altimeter': 30.00, 'wind_dir': 270, 'wind_speed': 10}
                     airport_data = {'icao': departure, 'name': departure}
@@ -3901,97 +3988,97 @@ class BriefingGenerator:
                     )
                     
                     if analysis:
-                        print("\n🤖 **AI ANALYSIS RESULTS**")
-                        print(analysis)
+                        self._info("\n🤖 **AI ANALYSIS RESULTS**")
+                        self._info(analysis)
                     else:
-                        print("   ⚠️ AI analysis failed")
+                        self._warn("   ⚠️ AI analysis failed")
             
-            print(f"\n✅ Weather analysis complete!")
+            self._info(f"\n✅ Weather analysis complete!")
             self.weather_analysis_results = f"Weather analysis completed for {departure} → {arrival}"
                 
         except Exception as e:
-            print(f"⚠️ Error during weather analysis: {e}")
+            self._info(f"⚠️ Error during weather analysis: {e}")
             
-        input("\nPress ENTER to continue...")
+        self._prompt("\nPress ENTER to continue...")
         return self._show_workflow_menu()
     
     def _passenger_briefing_workflow(self):
         """Generate passenger-friendly briefing script"""
-        print("\n" + "="*50)
-        print("👥 PASSENGER BRIEFING")
-        print("="*50)
+        self._info("\n" + "="*50)
+        self._info("👥 PASSENGER BRIEFING")
+        self._info("="*50)
         
         if not self.weather_analysis_results:
-            print("⚠️ Weather analysis not completed")
-            print("Passenger briefing works best after completing weather analysis")
-            proceed = input("Continue anyway? (y/N): ").strip().lower()
+            self._warn("⚠️ Weather analysis not completed")
+            self._info("Passenger briefing works best after completing weather analysis")
+            proceed = self._prompt("Continue anyway? (y/N): ").strip().lower()
             if proceed != 'y':
                 return self._show_workflow_menu()
         
-        print("🗣️ Generating passenger briefing script...")
+        self._info("🗣️ Generating passenger briefing script...")
         
         try:
             if self.chatgpt_manager.available:
                 analysis = self._generate_passenger_briefing_script()
                 if analysis:
                     self.passenger_brief_results = analysis
-                    print("\n" + "="*50)
-                    print("👥 PASSENGER BRIEFING SCRIPT")
-                    print("="*50)
-                    print(analysis)
-                    print("\n✅ Passenger briefing complete!")
+                    self._info("\n" + "="*50)
+                    self._info("👥 PASSENGER BRIEFING SCRIPT")
+                    self._info("="*50)
+                    self._info(analysis)
+                    self._info("\n✅ Passenger briefing complete!")
                 else:
-                    print("⚠️ Passenger briefing generation failed")
+                    self._warn("⚠️ Passenger briefing generation failed")
             else:
-                print("⚠️ ChatGPT not available for passenger briefing")
+                self._warn("⚠️ ChatGPT not available for passenger briefing")
                 
         except Exception as e:
-            print(f"⚠️ Error generating passenger briefing: {e}")
+            self._info(f"⚠️ Error generating passenger briefing: {e}")
             
-        input("\nPress ENTER to continue...")
+        self._prompt("\nPress ENTER to continue...")
         return self._show_workflow_menu()
     
     def _takeoff_briefing_workflow(self):
         """Takeoff briefing with performance calculations using Garmin Pilot data if available"""
-        print("\n" + "="*50)
-        print("🛫 TAKEOFF BRIEFING")
-        print("="*50)
+        self._info("\n" + "="*50)
+        self._info("🛫 TAKEOFF BRIEFING")
+        self._info("="*50)
         
         if self.current_briefing_data:
             departure = self.current_briefing_data['departure']
-            print(f"🛫 Departure briefing for {departure} (from Garmin Pilot briefing)")
+            self._info(f"🛫 Departure briefing for {departure} (from Garmin Pilot briefing)")
             
-            runway_input = input(f"Runway at {departure}: ").strip()
+            runway_input = self._prompt(f"Runway at {departure}: ").strip()
             if not runway_input:
                 return self._show_workflow_menu()
             runway = self._normalize_runway_input(runway_input)
             
             # SID prompt with empty default
             # Simple SID handling - manual input only
-            using_sid = input(f"Using a SID departure? (y/n) [n]: ").lower().strip()
+            using_sid = self._prompt(f"Using a SID departure? (y/n) [n]: ").lower().strip()
             sid_climb_rate = None
             sid_name = None
             sid_initial_altitude = None
             
             if using_sid == 'y':
-                sid_name = input(f"SID name (for reference only): ").upper().strip() or "SID"
-                sid_climb_input = input(f"Required climb gradient (ft/nm): ").strip()
+                sid_name = self._prompt(f"SID name (for reference only): ").upper().strip() or "SID"
+                sid_climb_input = self._prompt(f"Required climb gradient (ft/nm): ").strip()
                 try:
                     sid_climb_rate = float(sid_climb_input)
                     if sid_climb_rate < 100 or sid_climb_rate > 1000:
-                        print(f"⚠️ Unusual climb gradient: {sid_climb_rate} ft/nm")
+                        self._info(f"⚠️ Unusual climb gradient: {sid_climb_rate} ft/nm")
                 except (ValueError, TypeError):
-                    print(f"⚠️ Invalid climb gradient, using standard 200 ft/nm")
+                    self._info(f"⚠️ Invalid climb gradient, using standard 200 ft/nm")
                     sid_climb_rate = 200.0
                 
                 # Get SID initial altitude
-                sid_altitude_input = input(f"SID initial altitude (ft MSL): ").strip()
+                sid_altitude_input = self._prompt(f"SID initial altitude (ft MSL): ").strip()
                 try:
                     sid_initial_altitude = int(sid_altitude_input)
                     if sid_initial_altitude < 1000 or sid_initial_altitude > 18000:
-                        print(f"⚠️ Unusual initial altitude: {sid_initial_altitude} ft MSL")
+                        self._info(f"⚠️ Unusual initial altitude: {sid_initial_altitude} ft MSL")
                 except (ValueError, TypeError):
-                    print(f"⚠️ Invalid altitude entered")
+                    self._info(f"⚠️ Invalid altitude entered")
                     sid_initial_altitude = None
             
             return {
@@ -4005,20 +4092,20 @@ class BriefingGenerator:
                 'source': 'Garmin Pilot'
             }
         else:
-            print("⚠️ No Garmin Pilot briefing loaded - using manual input")
+            self._warn("⚠️ No Garmin Pilot briefing loaded - using manual input")
             return self._manual_departure_workflow()
     
     def _arrival_briefing_workflow(self):
         """Arrival briefing with performance calculations using Garmin Pilot data if available"""
-        print("\n" + "="*50)
-        print("🛬 ARRIVAL BRIEFING")
-        print("="*50)
+        self._info("\n" + "="*50)
+        self._info("🛬 ARRIVAL BRIEFING")
+        self._info("="*50)
         
         if self.current_briefing_data:
             arrival = self.current_briefing_data['arrival']
-            print(f"🛬 Arrival briefing for {arrival} (from Garmin Pilot briefing)")
+            self._info(f"🛬 Arrival briefing for {arrival} (from Garmin Pilot briefing)")
             
-            runway_input = input(f"Runway at {arrival}: ").strip()
+            runway_input = self._prompt(f"Runway at {arrival}: ").strip()
             if not runway_input:
                 return self._show_workflow_menu()
             runway = self._normalize_runway_input(runway_input)
@@ -4031,12 +4118,12 @@ class BriefingGenerator:
                 'source': 'Garmin Pilot'
             }
         else:
-            print("⚠️ No Garmin Pilot briefing loaded - using manual input")
+            self._warn("⚠️ No Garmin Pilot briefing loaded - using manual input")
             return self._manual_arrival_workflow()
     
     def _full_sequential_workflow(self):
         """Run all three briefings in sequence"""
-        print("\n🔄 Starting full sequential workflow...")
+        self._info("\n🔄 Starting full sequential workflow...")
         
         # 1. Weather Analysis
         result = self._weather_analysis_workflow()
@@ -4132,15 +4219,15 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         if not sid_name:
             return None
         
-        print(f"   📡 Looking up SID {sid_name} climb requirements for {icao}...")
+        self._info(f"   📡 Looking up SID {sid_name} climb requirements for {icao}...")
         
         # Try FAA data lookup with 2 retries
         for attempt in range(2):
             try:
                 if attempt == 0:
-                    print(f"   🔍 Fetching SID data from FAA CIFP...")
+                    self._info(f"   🔍 Fetching SID data from FAA CIFP...")
                 else:
-                    print(f"   🔄 Retrying SID lookup (attempt {attempt + 1}/2)...")
+                    self._info(f"   🔄 Retrying SID lookup (attempt {attempt + 1}/2)...")
                 
                 # Attempt to get SID data from FAA source
                 climb_requirement = self._fetch_faa_sid_data(icao, sid_name)
@@ -4149,8 +4236,8 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     if isinstance(climb_requirement, dict):
                         # New enhanced format with detailed information
                         if climb_requirement['status'] == 'found_but_no_gradient':
-                            print(f"   ✅ Found {climb_requirement['sid_name']} but could not extract climb gradient")
-                            print(f"   📍 {climb_requirement['guidance']}")
+                            self._info(f"   ✅ Found {climb_requirement['sid_name']} but could not extract climb gradient")
+                            self._info(f"   📍 {climb_requirement['guidance']}")
                             # Return the SID info for briefing display
                             return {
                                 'identifier': climb_requirement['sid_name'],
@@ -4163,11 +4250,11 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                             return climb_requirement
                     elif isinstance(climb_requirement, (int, float)):
                         # Numeric climb gradient found
-                        print(f"   ✅ Found {sid_name}: {climb_requirement} ft/nm climb requirement")
+                        self._info(f"   ✅ Found {sid_name}: {climb_requirement} ft/nm climb requirement")
                         return climb_requirement
                     else:
                         # Old string format fallback
-                        print(f"   ✅ Found {sid_name}: {climb_requirement}")
+                        self._info(f"   ✅ Found {sid_name}: {climb_requirement}")
                         return {
                             'identifier': sid_name,
                             'restrictions': str(climb_requirement),
@@ -4179,31 +4266,31 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     
             except Exception as e:
                 if attempt == 0:
-                    print(f"   ⚠️ SID lookup error: {e} - retrying...")
+                    self._info(f"   ⚠️ SID lookup error: {e} - retrying...")
                     continue
                 else:
-                    print(f"   ❌ FAA SID lookup failed after retries: {e}")
+                    self._info(f"   ❌ FAA SID lookup failed after retries: {e}")
                     break
         
         # Manual fallback
-        print(f"   📍 SID: {sid_name} at {icao}")
-        print(f"   💡 Check departure procedure for climb gradient requirement")
+        self._info(f"   📍 SID: {sid_name} at {icao}")
+        self._info(f"   💡 Check departure procedure for climb gradient requirement")
         
         try:
-            user_gradient = input(f"   Enter {sid_name} climb requirement (ft/nm) [skip]: ").strip()
+            user_gradient = self._prompt(f"   Enter {sid_name} climb requirement (ft/nm) [skip]: ").strip()
             if user_gradient and user_gradient.lower() not in ['skip', 'none', '']:
                 gradient = float(user_gradient)
-                print(f"   🧭 Using Manual Input: {sid_name} requires {gradient} ft/nm climb")
+                self._info(f"   🧭 Using Manual Input: {sid_name} requires {gradient} ft/nm climb")
                 return gradient
             else:
-                print(f"   ⚠️ **WARNING: ⚠️ ALL CAPS WARNING ⚠️**")
-                print(f"   🚨 **UNABLE TO CONFIRM {sid_name} CLIMB REQUIREMENT**")
-                print(f"   🚨 **VERIFY SID COMPLIANCE MANUALLY BEFORE DEPARTURE**")
+                self._info(f"   ⚠️ **WARNING: ⚠️ ALL CAPS WARNING ⚠️**")
+                self._info(f"   🚨 **UNABLE TO CONFIRM {sid_name} CLIMB REQUIREMENT**")
+                self._info(f"   🚨 **VERIFY SID COMPLIANCE MANUALLY BEFORE DEPARTURE**")
                 return None
         except (ValueError, EOFError):
-            print(f"   ⚠️ **WARNING: ⚠️ ALL CAPS WARNING ⚠️**")
-            print(f"   🚨 **UNABLE TO CONFIRM {sid_name} CLIMB REQUIREMENT**")
-            print(f"   🚨 **VERIFY SID COMPLIANCE MANUALLY BEFORE DEPARTURE**")
+            self._info(f"   ⚠️ **WARNING: ⚠️ ALL CAPS WARNING ⚠️**")
+            self._info(f"   🚨 **UNABLE TO CONFIRM {sid_name} CLIMB REQUIREMENT**")
+            self._info(f"   🚨 **VERIFY SID COMPLIANCE MANUALLY BEFORE DEPARTURE**")
             return None
     
     def _fetch_faa_sid_data(self, icao, sid_name):
@@ -4218,7 +4305,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             })
             
             # Try SkyVector first (easier to parse)
-            print(f"   🔍 Searching SkyVector for {icao} departure procedures...")
+            self._info(f"   🔍 Searching SkyVector for {icao} departure procedures...")
             skyvector_url = f"https://skyvector.com/airport/{icao}"
             
             try:
@@ -4227,15 +4314,15 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     html_content = response.text
                     
                     # DEBUG: Show some HTML content to see what we're working with
-                    print(f"   🐛 DEBUG: HTML content length: {len(html_content)} characters")
+                    self._info(f"   🐛 DEBUG: HTML content length: {len(html_content)} characters")
                     
                     # Look for the SID in the departure procedures list
                     if sid_name.upper() in html_content.upper():
-                        print(f"   ✅ Found {sid_name} listed in SkyVector procedures")
+                        self._info(f"   ✅ Found {sid_name} listed in SkyVector procedures")
                         
                         # Try to find the PDF link for this specific SID
                         pdf_links = self._extract_sid_pdf_links(html_content, sid_name)
-                        print(f"   🐛 DEBUG: Found {len(pdf_links)} PDF links: {pdf_links}")
+                        self._info(f"   🐛 DEBUG: Found {len(pdf_links)} PDF links: {pdf_links}")
                         
                         # Also try to find the PDF link from the HTML we already extracted
                         if not pdf_links:
@@ -4245,54 +4332,54 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                             matches = re.findall(pdf_pattern, html_content, re.IGNORECASE)
                             if matches:
                                 pdf_links = matches
-                                print(f"   🐛 DEBUG: Found PDF links via fallback search: {pdf_links}")
+                                self._info(f"   🐛 DEBUG: Found PDF links via fallback search: {pdf_links}")
                         
                         for pdf_link in pdf_links:
-                            print(f"   📄 Trying SID PDF: {pdf_link}")
+                            self._info(f"   📄 Trying SID PDF: {pdf_link}")
                             climb_req = self._parse_sid_pdf_content(session, pdf_link, sid_name)
                             if climb_req and isinstance(climb_req, (int, float)):
                                 return climb_req
                     else:
                         # List available SIDs and try fuzzy matching
                         available_sids = self._list_available_sids(html_content)
-                        print(f"   🐛 DEBUG: Found {len(available_sids)} available SIDs: {available_sids}")
+                        self._info(f"   🐛 DEBUG: Found {len(available_sids)} available SIDs: {available_sids}")
                         if available_sids:
                             fuzzy_match = self._find_fuzzy_sid_match(sid_name, available_sids)
                             if fuzzy_match:
-                                print(f"   💡 Did you mean {fuzzy_match}? Found close match for {sid_name}")
-                                print(f"   ✅ Using {fuzzy_match} instead of {sid_name}")
+                                self._info(f"   💡 Did you mean {fuzzy_match}? Found close match for {sid_name}")
+                                self._info(f"   ✅ Using {fuzzy_match} instead of {sid_name}")
                                 
                                 # DEBUG: Try to extract actual climb gradient data instead of just returning message
-                                print(f"   🐛 DEBUG: Attempting to extract climb gradient for {fuzzy_match}")
+                                self._info(f"   🐛 DEBUG: Attempting to extract climb gradient for {fuzzy_match}")
                                 
                                 # Look for climb gradient information in the HTML content around the SID name
                                 gradient_from_html = self._extract_climb_from_html(html_content, fuzzy_match)
                                 if gradient_from_html:
-                                    print(f"   ✅ Found climb gradient in HTML: {gradient_from_html}")
+                                    self._info(f"   ✅ Found climb gradient in HTML: {gradient_from_html}")
                                     return gradient_from_html
                                 else:
-                                    print(f"   ⚠️ Could not extract climb gradient from HTML content")
+                                    self._info(f"   ⚠️ Could not extract climb gradient from HTML content")
                                 
                                 # Try to extract PDF for this fuzzy matched SID
-                                print(f"   🔍 Looking for PDF links for {fuzzy_match}...")
+                                self._info(f"   🔍 Looking for PDF links for {fuzzy_match}...")
                                 fuzzy_pdf_links = self._extract_sid_pdf_links_fuzzy(html_content, fuzzy_match)
-                                print(f"   🐛 DEBUG: Found {len(fuzzy_pdf_links)} PDF links for {fuzzy_match}: {fuzzy_pdf_links}")
+                                self._info(f"   🐛 DEBUG: Found {len(fuzzy_pdf_links)} PDF links for {fuzzy_match}: {fuzzy_pdf_links}")
                                 
                                 for pdf_link in fuzzy_pdf_links:
-                                    print(f"   📄 Trying fuzzy matched SID PDF: {pdf_link}")
+                                    self._info(f"   📄 Trying fuzzy matched SID PDF: {pdf_link}")
                                     climb_req = self._parse_sid_pdf_content(session, pdf_link, fuzzy_match)
                                     if climb_req and isinstance(climb_req, (int, float)):
                                         return climb_req
                                 
                                 # Check if this is a standard departure (default 200 ft/nm) or has special requirements
-                                print(f"   🔍 Applying standard departure logic for {fuzzy_match}")
+                                self._info(f"   🔍 Applying standard departure logic for {fuzzy_match}")
                                 
                                 # The PDF parsing failed to extract readable text
                                 # We need to fix the PDF text extraction to read "295 ft/nm to 8600 feet"
                                 # For now, fall back to FAA standard until we can parse the PDF properly
                                 sid_gradient = 200  # ft/nm per FAA standard
-                                print(f"   ⚠️ PDF text extraction failed - using FAA standard: {sid_gradient} ft/nm")
-                                print(f"   🔧 TODO: Fix PDF parsing to extract actual requirements like '295 ft/nm to 8600 feet'")
+                                self._info(f"   ⚠️ PDF text extraction failed - using FAA standard: {sid_gradient} ft/nm")
+                                self._info(f"   🔧 TODO: Fix PDF parsing to extract actual requirements like '295 ft/nm to 8600 feet'")
                                 is_standard = True
                                 
                                 status_message = 'found_using_standard' if is_standard else 'found_with_specific_gradient'
@@ -4309,15 +4396,15 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                                     'is_standard': is_standard
                                 }
                             else:
-                                print(f"   ℹ️ Available SIDs at {icao}: {', '.join(available_sids)}")
+                                self._info(f"   ℹ️ Available SIDs at {icao}: {', '.join(available_sids)}")
                                 raise ValueError(f"SID {sid_name} not found. Available: {', '.join(available_sids)}")
                         else:
                             raise ValueError(f"SID {sid_name} not found and could not list available procedures")
             except requests.RequestException as e:
-                print(f"   ⚠️ SkyVector lookup failed: {e}")
+                self._info(f"   ⚠️ SkyVector lookup failed: {e}")
             
             # Fallback: Try FAA AeroNav direct
-            print(f"   🔄 Trying FAA AeroNav...")
+            self._info(f"   🔄 Trying FAA AeroNav...")
             faa_url = f"https://aeronav.faa.gov/d-tpp/"
             
             # This would need to be enhanced with actual FAA navigation
@@ -4325,7 +4412,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             raise ValueError(f"SID {sid_name} not found in available data sources")
             
         except Exception as e:
-            print(f"   ⚠️ SID lookup error: {e}")
+            self._info(f"   ⚠️ SID lookup error: {e}")
             raise ValueError(f"Unable to fetch {sid_name}: {e}")
     
     def _extract_sid_pdf_links(self, html_content, sid_name):
@@ -4351,7 +4438,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         # BOBKT FIVE -> BOBKT, MEADO TWO -> MEADO, etc.
         base_name = sid_name.split()[0] if ' ' in sid_name else sid_name
         
-        print(f"   🔍 Extracting PDF links for base name: {base_name}")
+        self._info(f"   🔍 Extracting PDF links for base name: {base_name}")
         
         # Look for PDF href patterns that contain the base name
         patterns = [
@@ -4367,7 +4454,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         for pattern in patterns:
             matches = re.findall(pattern, html_content, re.IGNORECASE)
             pdf_links.extend(matches)
-            print(f"   🐛 Pattern '{pattern}' found: {matches}")
+            self._info(f"   🐛 Pattern '{pattern}' found: {matches}")
         
         return list(set(pdf_links))  # Remove duplicates
     
@@ -4450,7 +4537,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         """Extract climb gradient requirements from HTML content around SID name"""
         import re
         
-        print(f"   🐛 DEBUG: Looking for climb gradient in HTML for {sid_name}")
+        self._info(f"   🐛 DEBUG: Looking for climb gradient in HTML for {sid_name}")
         
         # Look for climb gradient patterns in the vicinity of the SID name
         # Common patterns on SkyVector and aviation websites
@@ -4475,23 +4562,23 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         ]
         
         for i, pattern in enumerate(patterns):
-            print(f"   🐛 DEBUG: Trying pattern {i+1}: {pattern}")
+            self._info(f"   🐛 DEBUG: Trying pattern {i+1}: {pattern}")
             matches = re.finditer(pattern, html_content.upper(), re.IGNORECASE | re.MULTILINE | re.DOTALL)
             for match in matches:
                 try:
                     gradient = int(match.group(1))
-                    print(f"   🐛 DEBUG: Found potential gradient: {gradient}")
+                    self._info(f"   🐛 DEBUG: Found potential gradient: {gradient}")
                     if 100 <= gradient <= 2000:  # Reasonable range for climb gradients
-                        print(f"   ✅ Extracted climb requirement from HTML: {gradient} ft/nm")
+                        self._info(f"   ✅ Extracted climb requirement from HTML: {gradient} ft/nm")
                         return gradient
                     else:
-                        print(f"   ⚠️ Gradient {gradient} outside reasonable range (100-2000)")
+                        self._info(f"   ⚠️ Gradient {gradient} outside reasonable range (100-2000)")
                 except (ValueError, IndexError) as e:
-                    print(f"   ⚠️ Error parsing gradient: {e}")
+                    self._info(f"   ⚠️ Error parsing gradient: {e}")
                     continue
         
         # If no specific patterns found, search for any climb gradient numbers around the SID
-        print(f"   🐛 DEBUG: No specific patterns found, searching for general climb gradients near {sid_name}")
+        self._info(f"   🐛 DEBUG: No specific patterns found, searching for general climb gradients near {sid_name}")
         
         # Find the section of HTML containing the SID name
         sid_position = html_content.upper().find(sid_name.upper())
@@ -4501,7 +4588,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             end = min(len(html_content), sid_position + 1000)
             sid_section = html_content[start:end]
             
-            print(f"   🐛 DEBUG: Searching in SID section (length {len(sid_section)})")
+            self._info(f"   🐛 DEBUG: Searching in SID section (length {len(sid_section)})")
             
             # Look for any gradient numbers in this section
             gradient_pattern = r'(\d+)\s*(?:ft|feet)\s*(?:per|/)\s*(?:nm|nautical\s*mile|n\.m\.)'
@@ -4510,58 +4597,58 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             for match in gradient_matches:
                 try:
                     gradient = int(match.group(1))
-                    print(f"   🐛 DEBUG: Found gradient in SID section: {gradient}")
+                    self._info(f"   🐛 DEBUG: Found gradient in SID section: {gradient}")
                     if 100 <= gradient <= 2000:
-                        print(f"   ✅ Using gradient from SID section: {gradient} ft/nm")
+                        self._info(f"   ✅ Using gradient from SID section: {gradient} ft/nm")
                         return gradient
                 except (ValueError, IndexError):
                     continue
         
-        print(f"   ⚠️ No climb gradient found in HTML for {sid_name}")
+        self._info(f"   ⚠️ No climb gradient found in HTML for {sid_name}")
         return None
     
     def _parse_sid_pdf_content(self, session, pdf_url, sid_name):
         """Parse SID PDF content for climb requirements"""
         try:
-            print(f"   📖 Downloading and parsing SID PDF for {sid_name}...")
+            self._info(f"   📖 Downloading and parsing SID PDF for {sid_name}...")
             
             # Build the full URL if it's a relative path
             if pdf_url.startswith('/'):
                 pdf_url = f"https://skyvector.com{pdf_url}"
             
-            print(f"   🌐 PDF URL: {pdf_url}")
+            self._info(f"   🌐 PDF URL: {pdf_url}")
             
             # Download the PDF
             pdf_response = session.get(pdf_url, timeout=15)
             if pdf_response.status_code != 200:
-                print(f"   ❌ Failed to download PDF: HTTP {pdf_response.status_code}")
+                self._info(f"   ❌ Failed to download PDF: HTTP {pdf_response.status_code}")
                 return None
             
-            print(f"   📄 Downloaded PDF: {len(pdf_response.content)} bytes")
+            self._info(f"   📄 Downloaded PDF: {len(pdf_response.content)} bytes")
             
             # Extract text from PDF
             pdf_text = self._extract_text_from_pdf_bytes(pdf_response.content)
             if not pdf_text:
-                print(f"   ⚠️ No text extracted from PDF")
+                self._info(f"   ⚠️ No text extracted from PDF")
                 return None
             
-            print(f"   📝 Extracted text length: {len(pdf_text)} characters")
-            print(f"   🔍 Searching for climb requirements in PDF text...")
+            self._info(f"   📝 Extracted text length: {len(pdf_text)} characters")
+            self._info(f"   🔍 Searching for climb requirements in PDF text...")
             
             # Look for climb gradient in the extracted text
             climb_req = self._extract_climb_from_text(pdf_text, sid_name)
             if climb_req:
-                print(f"   ✅ Found climb requirement in PDF: {climb_req}")
+                self._info(f"   ✅ Found climb requirement in PDF: {climb_req}")
                 return climb_req
             else:
-                print(f"   ⚠️ No climb requirement found in PDF text")
+                self._info(f"   ⚠️ No climb requirement found in PDF text")
                 # Show a sample of the text for debugging
                 sample_text = pdf_text[:500] if len(pdf_text) > 500 else pdf_text
-                print(f"   🐛 PDF text sample: {repr(sample_text)}")
+                self._info(f"   🐛 PDF text sample: {repr(sample_text)}")
                 return None
                 
         except Exception as e:
-            print(f"   ❌ PDF parsing error: {e}")
+            self._info(f"   ❌ PDF parsing error: {e}")
             return None
     
     def _get_current_airac(self):
@@ -4580,7 +4667,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
     def _parse_sid_pdf(self, session, pdf_url, sid_name):
         """Parse SID PDF to extract climb gradient requirements"""
         try:
-            print(f"   📖 Parsing SID PDF for climb requirements...")
+            self._info(f"   📖 Parsing SID PDF for climb requirements...")
             
             # Download PDF
             pdf_response = session.get(pdf_url, timeout=15)
@@ -4596,7 +4683,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             return self._extract_climb_from_text(pdf_text, sid_name)
             
         except Exception as e:
-            print(f"   ⚠️ PDF parsing error: {e}")
+            self._info(f"   ⚠️ PDF parsing error: {e}")
             return None
     
     def _extract_text_from_pdf_bytes(self, pdf_bytes):
@@ -4609,11 +4696,11 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                 import PyPDF2
                 import io
                 
-                print(f"   🔧 Using PyPDF2 for text extraction...")
+                self._info(f"   🔧 Using PyPDF2 for text extraction...")
                 pdf_file = io.BytesIO(pdf_bytes)
                 pdf_reader = PyPDF2.PdfReader(pdf_file)
                 
-                print(f"   📄 PDF has {len(pdf_reader.pages)} pages")
+                self._info(f"   📄 PDF has {len(pdf_reader.pages)} pages")
                 
                 text = ""
                 for page_num in range(len(pdf_reader.pages)):
@@ -4621,27 +4708,27 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     page_text = page.extract_text()
                     
                     if page_text:
-                        print(f"   📄 Page {page_num + 1}: {len(page_text)} characters")
+                        self._info(f"   📄 Page {page_num + 1}: {len(page_text)} characters")
                         # Show sample of extracted text from each page
                         sample = page_text[:200].replace('\n', ' ')
-                        print(f"   🔍 Sample from page {page_num + 1}: {repr(sample)}")
+                        self._info(f"   🔍 Sample from page {page_num + 1}: {repr(sample)}")
                         text += page_text + "\n"
                     else:
-                        print(f"   📄 Page {page_num + 1}: No text extracted")
+                        self._info(f"   📄 Page {page_num + 1}: No text extracted")
                 
                 if text.strip():
-                    print(f"   ✅ PyPDF2 extracted {len(text)} total characters")
+                    self._info(f"   ✅ PyPDF2 extracted {len(text)} total characters")
                     # Show overall sample for debugging
                     sample = text[:500].replace('\n', ' ')
-                    print(f"   🔍 Overall text sample: {repr(sample[:200])}...")
+                    self._info(f"   🔍 Overall text sample: {repr(sample[:200])}...")
                     return text
                 else:
-                    print(f"   ⚠️ PyPDF2 extracted no readable text")
+                    self._info(f"   ⚠️ PyPDF2 extracted no readable text")
                     
             except ImportError:
-                print(f"   ❌ PyPDF2 not available - this should be installed in Pythonista")
+                self._info(f"   ❌ PyPDF2 not available - this should be installed in Pythonista")
             except Exception as e:
-                print(f"   ⚠️ PyPDF2 extraction failed: {e}")
+                self._info(f"   ⚠️ PyPDF2 extraction failed: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -4650,7 +4737,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                 import pdfplumber
                 import io
                 
-                print(f"   🔧 Using pdfplumber for text extraction...")
+                self._info(f"   🔧 Using pdfplumber for text extraction...")
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                     text = ""
                     for page in pdf.pages:
@@ -4659,18 +4746,18 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                             text += page_text + "\n"
                 
                 if text.strip():
-                    print(f"   ✅ pdfplumber extracted {len(text)} characters")
+                    self._info(f"   ✅ pdfplumber extracted {len(text)} characters")
                     return text
                 else:
-                    print(f"   ⚠️ pdfplumber extracted empty text")
+                    self._info(f"   ⚠️ pdfplumber extracted empty text")
                     
             except ImportError:
-                print(f"   ⚠️ pdfplumber not available, trying basic extraction...")
+                self._info(f"   ⚠️ pdfplumber not available, trying basic extraction...")
             except Exception as e:
-                print(f"   ⚠️ pdfplumber extraction failed: {e}")
+                self._info(f"   ⚠️ pdfplumber extraction failed: {e}")
             
             # Approach 3: Basic text search in PDF bytes (very limited)
-            print(f"   🔧 Using basic byte-level text extraction...")
+            self._info(f"   🔧 Using basic byte-level text extraction...")
             
             # Look for common text patterns in PDF bytes
             text = ""
@@ -4701,16 +4788,16 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     text = re.sub(r'\s+', ' ', text).strip()
                     
                     if len(text) > 50:  # Only return if we got a reasonable amount of text
-                        print(f"   ✅ Basic extraction found {len(text)} characters")
+                        self._info(f"   ✅ Basic extraction found {len(text)} characters")
                         return text
                     else:
-                        print(f"   ⚠️ Basic extraction found only {len(text)} characters")
+                        self._info(f"   ⚠️ Basic extraction found only {len(text)} characters")
                         
             except Exception as e:
-                print(f"   ⚠️ Basic extraction failed: {e}")
+                self._info(f"   ⚠️ Basic extraction failed: {e}")
             
             # Approach 4: More aggressive byte-level search for climb gradient patterns
-            print(f"   🔧 Searching for climb gradient patterns in PDF bytes...")
+            self._info(f"   🔧 Searching for climb gradient patterns in PDF bytes...")
             
             try:
                 # Try multiple encodings to decode the PDF
@@ -4719,7 +4806,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                 for encoding in encodings_to_try:
                     try:
                         decoded_text = pdf_bytes.decode(encoding, errors='ignore').upper()
-                        print(f"   🔍 Trying {encoding} decoding...")
+                        self._info(f"   🔍 Trying {encoding} decoding...")
                         
                         # Search for specific gradient patterns in the decoded text
                         import re
@@ -4741,7 +4828,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                                         start = max(0, match.start() - 100)
                                         end = min(len(decoded_text), match.end() + 100)
                                         context = decoded_text[start:end]
-                                        print(f"   🎯 Found potential gradient {gradient} in {encoding}: {context[:200]}...")
+                                        self._info(f"   🎯 Found potential gradient {gradient} in {encoding}: {context[:200]}...")
                                         return f"EXTRACTED: {gradient} ft/nm (from {encoding} decoding)"
                                 except (ValueError, IndexError):
                                     continue
@@ -4760,41 +4847,41 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                                     altitude = int(match.group(2)) if len(match.groups()) > 1 else None
                                     if 200 <= gradient <= 500:
                                         context = decoded_text[max(0, match.start() - 50):match.end() + 50]
-                                        print(f"   🎯 Found BOBKT gradient {gradient} to {altitude} in {encoding}: {context[:200]}...")
+                                        self._info(f"   🎯 Found BOBKT gradient {gradient} to {altitude} in {encoding}: {context[:200]}...")
                                         return f"EXTRACTED: {gradient} ft/nm to {altitude} ft (from {encoding} decoding)"
                                 except (ValueError, IndexError):
                                     continue
                                     
                     except Exception as e:
-                        print(f"   ⚠️ {encoding} decoding failed: {e}")
+                        self._info(f"   ⚠️ {encoding} decoding failed: {e}")
                         continue
                 
-                print(f"   ⚠️ No climb gradient patterns found in any encoding")
+                self._info(f"   ⚠️ No climb gradient patterns found in any encoding")
                     
             except Exception as e:
-                print(f"   ⚠️ Advanced PDF parsing failed: {e}")
+                self._info(f"   ⚠️ Advanced PDF parsing failed: {e}")
             
-            print(f"   ❌ All PDF text extraction methods failed")
+            self._info(f"   ❌ All PDF text extraction methods failed")
             return ""
             
         except Exception as e:
-            print(f"   ❌ PDF text extraction error: {e}")
+            self._info(f"   ❌ PDF text extraction error: {e}")
             return ""
     
     def _extract_climb_from_text(self, text, sid_name):
         """Extract climb gradient requirements from text"""
         import re
         
-        print(f"   🔍 Analyzing extracted text for climb gradients...")
+        self._info(f"   🔍 Analyzing extracted text for climb gradients...")
         
         # Clean up the text first - remove excessive whitespace and normalize
         cleaned_text = re.sub(r'\s+', ' ', text).strip().upper()
-        print(f"   📝 Cleaned text length: {len(cleaned_text)} characters")
+        self._info(f"   📝 Cleaned text length: {len(cleaned_text)} characters")
         
         # Show a longer sample for debugging
         sample_length = min(1000, len(cleaned_text))
         sample_text = cleaned_text[:sample_length]
-        print(f"   🐛 First {sample_length} chars: {repr(sample_text[:200])}...")
+        self._info(f"   🐛 First {sample_length} chars: {repr(sample_text[:200])}...")
         
         # Look for common climb gradient patterns in departure procedures
         patterns = [
@@ -4820,7 +4907,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
         found_candidates = []
         
         for i, pattern in enumerate(patterns, 1):
-            print(f"   🔍 Pattern {i}: {pattern}")
+            self._info(f"   🔍 Pattern {i}: {pattern}")
             matches = re.finditer(pattern, cleaned_text, re.IGNORECASE | re.MULTILINE)
             for match in matches:
                 try:
@@ -4829,15 +4916,15 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     context_end = min(len(cleaned_text), match.end() + 50)
                     context = cleaned_text[context_start:context_end]
                     
-                    print(f"   🎯 Found potential gradient: {gradient} in context: {repr(context)}")
+                    self._info(f"   🎯 Found potential gradient: {gradient} in context: {repr(context)}")
                     
                     if 100 <= gradient <= 2000:  # Reasonable range for climb gradients
                         found_candidates.append((gradient, context, i))
                     else:
-                        print(f"   ⚠️ Gradient {gradient} outside reasonable range (100-2000)")
+                        self._info(f"   ⚠️ Gradient {gradient} outside reasonable range (100-2000)")
                         
                 except (ValueError, IndexError) as e:
-                    print(f"   ❌ Error parsing gradient from pattern {i}: {e}")
+                    self._info(f"   ❌ Error parsing gradient from pattern {i}: {e}")
                     continue
         
         # If we found candidates, return the most likely one
@@ -4846,19 +4933,19 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             found_candidates.sort(key=lambda x: x[2])
             best_gradient, best_context, pattern_num = found_candidates[0]
             
-            print(f"   ✅ Selected best climb gradient: {best_gradient} ft/nm (from pattern {pattern_num})")
-            print(f"   📍 Context: {repr(best_context)}")
+            self._info(f"   ✅ Selected best climb gradient: {best_gradient} ft/nm (from pattern {pattern_num})")
+            self._info(f"   📍 Context: {repr(best_context)}")
             return best_gradient
         
         # If no patterns matched, try a broader search for numbers
-        print(f"   🔍 No specific patterns found, searching for any aviation-related numbers...")
+        self._info(f"   🔍 No specific patterns found, searching for any aviation-related numbers...")
         
         # Look for aviation keywords near numbers
         aviation_keywords = ['CLIMB', 'GRADIENT', 'MINIMUM', 'DEPARTURE', 'PROCEDURE', 'OBSTRUCTION', 'CLEARANCE']
         
         for keyword in aviation_keywords:
             if keyword in cleaned_text:
-                print(f"   ✈️  Found aviation keyword: {keyword}")
+                self._info(f"   ✈️  Found aviation keyword: {keyword}")
                 # Look for numbers near this keyword
                 keyword_pos = cleaned_text.find(keyword)
                 nearby_start = max(0, keyword_pos - 100)
@@ -4870,54 +4957,54 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
                     try:
                         num = int(num_str)
                         if 100 <= num <= 2000:
-                            print(f"   💡 Found potential gradient {num} near keyword '{keyword}'")
-                            print(f"   📍 Context: {repr(nearby_text)}")
+                            self._info(f"   💡 Found potential gradient {num} near keyword '{keyword}'")
+                            self._info(f"   📍 Context: {repr(nearby_text)}")
                             return num
                     except ValueError:
                         continue
         
-        print(f"   ❌ No climb gradient found in extracted text")
+        self._info(f"   ❌ No climb gradient found in extracted text")
         return None
     
     
     def _manual_departure_workflow(self):
         """Manual input workflow for departure briefings"""
-        print("\n📝 Manual departure briefing (no Garmin Pilot data)")
-        icao = input("Departure Airport ICAO: ").upper().strip()
+        self._info("\n📝 Manual departure briefing (no Garmin Pilot data)")
+        icao = self._prompt("Departure Airport ICAO: ").upper().strip()
         if not icao:
             return None
             
-        runway_input = input("Runway: ").strip()
+        runway_input = self._prompt("Runway: ").strip()
         if not runway_input:
             return None
         runway = self._normalize_runway_input(runway_input)
         
         # SID prompt with empty default
         # Simple SID handling - manual input only
-        using_sid = input(f"Using a SID departure? (y/n) [n]: ").lower().strip()
+        using_sid = self._prompt(f"Using a SID departure? (y/n) [n]: ").lower().strip()
         sid_climb_rate = None
         sid_name = None
         sid_initial_altitude = None
         
         if using_sid == 'y':
-            sid_name = input(f"SID name (for reference only): ").upper().strip() or "SID"
-            sid_climb_input = input(f"Required climb gradient (ft/nm): ").strip()
+            sid_name = self._prompt(f"SID name (for reference only): ").upper().strip() or "SID"
+            sid_climb_input = self._prompt(f"Required climb gradient (ft/nm): ").strip()
             try:
                 sid_climb_rate = float(sid_climb_input)
                 if sid_climb_rate < 100 or sid_climb_rate > 1000:
-                    print(f"⚠️ Unusual climb gradient: {sid_climb_rate} ft/nm")
+                    self._info(f"⚠️ Unusual climb gradient: {sid_climb_rate} ft/nm")
             except (ValueError, TypeError):
-                print(f"⚠️ Invalid climb gradient, using standard 200 ft/nm")
+                self._info(f"⚠️ Invalid climb gradient, using standard 200 ft/nm")
                 sid_climb_rate = 200.0
             
             # Get SID initial altitude
-            sid_altitude_input = input(f"SID initial altitude (ft MSL): ").strip()
+            sid_altitude_input = self._prompt(f"SID initial altitude (ft MSL): ").strip()
             try:
                 sid_initial_altitude = int(sid_altitude_input)
                 if sid_initial_altitude < 1000 or sid_initial_altitude > 18000:
-                    print(f"⚠️ Unusual initial altitude: {sid_initial_altitude} ft MSL")
+                    self._info(f"⚠️ Unusual initial altitude: {sid_initial_altitude} ft MSL")
             except (ValueError, TypeError):
-                print(f"⚠️ Invalid altitude entered")
+                self._info(f"⚠️ Invalid altitude entered")
                 sid_initial_altitude = None
             
         return {
@@ -4932,12 +5019,12 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
     
     def _manual_arrival_workflow(self):
         """Manual input workflow for arrival briefings"""
-        print("\n📝 Manual arrival briefing (no Garmin Pilot data)")
-        icao = input("Arrival Airport ICAO: ").upper().strip()
+        self._info("\n📝 Manual arrival briefing (no Garmin Pilot data)")
+        icao = self._prompt("Arrival Airport ICAO: ").upper().strip()
         if not icao:
             return None
             
-        runway_input = input("Runway: ").strip()
+        runway_input = self._prompt("Runway: ").strip()
         if not runway_input:
             return None
         runway = self._normalize_runway_input(runway_input)
@@ -4951,20 +5038,20 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
 
     def _manual_input_workflow(self):
         """Traditional manual takeoff briefing workflow"""
-        print("\n📝 Manual takeoff briefing (no Garmin Pilot data)")
+        self._info("\n📝 Manual takeoff briefing (no Garmin Pilot data)")
         return self._full_manual_workflow()
     
     
     def _full_manual_workflow(self):
         """Original manual input workflow"""
-        icao = input("Airport ICAO: ").upper().strip()
+        icao = self._prompt("Airport ICAO: ").upper().strip()
         if not icao:
             return None
             
-        op = input("Operation ([D]eparture/[A]rrival) [D]: ").upper().strip()
+        op = self._prompt("Operation ([D]eparture/[A]rrival) [D]: ").upper().strip()
         operation = 'arrival' if op in ['A', 'ARRIVAL'] else 'departure'
             
-        runway_input = input("Runway: ").strip()
+        runway_input = self._prompt("Runway: ").strip()
         if not runway_input:
             return None
         runway = self._normalize_runway_input(runway_input)
@@ -4979,7 +5066,7 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
     def generate_briefing(self, inputs):
         """Generate briefing"""
         try:
-            weather_data = WeatherManager.fetch_metar(inputs['icao'])
+            weather_data = self.weather_manager.fetch_metar(inputs['icao'])
             if not weather_data:
                 return "ERROR: No weather data"
                 
@@ -5177,8 +5264,8 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
             
         except Exception as e:
             import traceback
-            print("Calculation error: " + str(e))
-            print("Full traceback:")
+            self._info("Calculation error: " + str(e))
+            self._info("Full traceback:")
             traceback.print_exc()
             return None
             
@@ -5719,9 +5806,9 @@ FORMAT: Conversational script that can be read aloud, approximately 2-3 minutes 
 
 def main():
     """Main execution with enhanced Garmin Pilot integration and automatic runway data"""
-    print("🛩️ SR22T Briefing Tool v31.0 - WORKFLOW EDITION")
-    print("✨ Sequential Workflow + Weather Analysis + Garmin Pilot Integration")
-    print("Running on Pythonista iOS")
+    self._info("🛩️ SR22T Briefing Tool v31.0 - WORKFLOW EDITION")
+    self._info("✨ Sequential Workflow + Weather Analysis + Garmin Pilot Integration")
+    self._info("Running on Pythonista iOS")
     
     briefing_tool = BriefingGenerator()
     
@@ -5730,20 +5817,21 @@ def main():
         if not inputs:
             break
             
-        print("\n🔄 Generating briefing...")
+        self._info("\n🔄 Generating briefing...")
         briefing = briefing_tool.generate_briefing(inputs)
         
-        print("\n" + "="*60)
-        print(briefing)
-        print("="*60)
+        self._info("\n" + "="*60)
+        self._info(briefing)
+        self._info("="*60)
         
-        if input("\n🔄 Another briefing? (y/n): ").lower() != 'y':
+        if self._prompt("\n🔄 Another briefing? (y/n): ").lower() != 'y':
             break
             
-    print("\n✈️ Flight safe!")
+    self._info("\n✈️ Flight safe!")
 
 if __name__ == "__main__":
     main()
+
 
 # ============================================
 # PUBLIC API AND CONVENIENCE FUNCTIONS
@@ -5769,7 +5857,7 @@ def get_build_info():
         "requests_available": REQUESTS_AVAILABLE,
         "numpy_available": NUMPY_AVAILABLE,
         "file_search_paths": get_ios_file_search_paths(),
-        "build_date": "2025-09-17T12:39:33.969256"
+        "build_date": "2025-09-18T06:25:18.484203"
     }
 
 # Main public API - these are the primary classes users should access

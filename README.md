@@ -72,6 +72,16 @@ pytest tests/
 python -c "import passbrief; briefing_gen = passbrief.create_briefing_generator()"
 ```
 
+### Logging
+
+Set the `APP_LOG` environment variable to control diagnostic verbosity:
+
+```bash
+APP_LOG=full python -m passbrief.briefing.generator
+APP_LOG=critical python -m passbrief.briefing.generator  # default
+APP_LOG=silent python -m passbrief.briefing.generator
+```
+
 ### Pythonista iOS Deployment
 
 ```bash
@@ -132,8 +142,10 @@ print(f"Crosswind: {components['crosswind']} kt")
 ```python
 from passbrief import WeatherManager
 
+weather_manager = WeatherManager()
+
 # Fetch current METAR data
-weather = WeatherManager.fetch_metar("KSLC")
+weather = weather_manager.fetch_metar("KSLC")
 if weather:
     print(f"Temperature: {weather['temp_c']}°C")
     print(f"Wind: {weather['wind_dir']}°/{weather['wind_speed']}kt")

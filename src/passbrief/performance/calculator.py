@@ -1,32 +1,22 @@
 #!/usr/bin/env python3
-"""
-Performance Calculator for SR22T Aircraft
+"""Performance Calculator for SR22T Aircraft."""
 
-SAFETY-CRITICAL AVIATION COMPONENT:
+from __future__ import annotations
 
-WHY THIS CLASS EXISTS:
-The PerformanceCalculator handles all flight performance calculations for the SR22T.
-These calculations are SAFETY CRITICAL - incorrect results could lead to runway overruns,
-inadequate climb performance, or other dangerous situations.
-
-ARCHITECTURE DECISION: Centralized performance calculations
-- All aviation calculations in one place for consistency and testing
-- Uses embedded POH (Pilot's Operating Handbook) data for accuracy
-- Implements proper altitude corrections (pressure altitude, density altitude)
-- Handles wind component analysis for runway performance
-
-AVIATION CONTEXT BASICS:
-- Pressure Altitude: What the altimeter reads when set to 29.92" (standard)
-- Density Altitude: How the airplane "feels" the altitude based on temperature
-- Higher density altitude = worse performance (longer takeoff, reduced climb)
-- Wind components: Headwind helps performance, crosswind adds complexity
-
-TESTING STRATEGY: Verify all calculations with known aviation formulas
-"""
-
+import logging
 import math
+
 from ..config import Config
+from ..models import (
+    ClimbGradientSummary,
+    LandingPerformance,
+    TakeoffPerformance,
+    WindComponents,
+)
 from .data import EMBEDDED_SR22T_PERFORMANCE
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PerformanceCalculator:
@@ -61,7 +51,7 @@ class PerformanceCalculator:
         # Standard pressure altitude formula - aviation standard since ICAO adoption
         pa = field_elevation_ft + (29.92 - altimeter_inhg) * 1000
 
-        print("Pressure altitude: " + str(round(pa, 0)) + " ft")
+        LOGGER.debug("Pressure altitude: %.0f ft", pa)
 
         # Round to nearest 10 ft for performance table interpolation
         # WHY ROUNDING: POH tables use 10 ft increments, enables accurate interpolation
@@ -89,7 +79,7 @@ class PerformanceCalculator:
         expected_rounded = round(expected / 10) * 10
         assert result == expected_rounded, f"Low pressure test failed: expected {expected_rounded}, got {result}"
 
-        print("✅ Pressure altitude calculation tests passed")
+        LOGGER.debug("Pressure altitude calculation tests passed")
 
     def calculate_isa_temp(self, pressure_altitude_ft):
         """
@@ -132,7 +122,7 @@ class PerformanceCalculator:
         expected = 15 - 2 * (5000 / 1000)  # Should be 5°C
         assert result == expected, f"5000 ft ISA test failed: expected {expected}°C, got {result}"
 
-        print("✅ ISA temperature calculation tests passed")
+        LOGGER.debug("ISA temperature calculation tests passed")
 
     def calculate_density_altitude(self, pressure_altitude_ft, oat_c, field_elevation_ft):
         """
@@ -167,7 +157,7 @@ class PerformanceCalculator:
         # 120 ft per degree C deviation from ISA is aviation standard
         density_altitude = pressure_altitude_ft + 120 * (oat_c - isa_temp)
 
-        print("Density altitude: " + str(round(density_altitude, 0)) + " ft")
+        LOGGER.debug("Density altitude: %.0f ft", density_altitude)
 
         # Round to nearest 50 ft for performance calculations
         # WHY 50 FT: Provides reasonable precision without false accuracy
@@ -200,7 +190,7 @@ class PerformanceCalculator:
         expected_rounded = round(expected / 50) * 50
         assert result == expected_rounded, f"Cold day test failed: expected {expected_rounded}, got {result}"
 
-        print("✅ Density altitude calculation tests passed")
+        LOGGER.debug("Density altitude calculation tests passed")
 
     def calculate_wind_components(self, runway_heading, wind_dir, wind_speed):
         """
@@ -233,7 +223,7 @@ class PerformanceCalculator:
         try:
             # Handle variable wind direction (VRB in METAR)
             if isinstance(wind_dir, str) and wind_dir.upper() == 'VRB':
-                print(f"Variable wind direction - using runway heading for calculation")
+                LOGGER.info("Variable wind direction detected; assuming runway-aligned wind")
                 wind_dir = runway_heading  # Treat as headwind for performance calculations
             else:
                 wind_dir = int(wind_dir)
@@ -241,7 +231,12 @@ class PerformanceCalculator:
             wind_speed = int(wind_speed)
             runway_heading = int(runway_heading)
         except (ValueError, TypeError):
-            print(f"Error: Invalid wind data - wind_dir: {wind_dir}, wind_speed: {wind_speed}, runway_heading: {runway_heading}")
+            LOGGER.error(
+                "Invalid wind data (dir=%s, speed=%s, runway=%s)",
+                wind_dir,
+                wind_speed,
+                runway_heading,
+            )
             # Return zero wind as fallback
             return {
                 'headwind': 0,
@@ -273,23 +268,27 @@ class PerformanceCalculator:
         # Check SR22T crosswind limits (POH data: max demonstrated 21 kt)
         crosswind_exceeds_limits = abs_crosswind > 21
         if crosswind_exceeds_limits:
-            print(f"🚨 CROSSWIND EXCEEDS LIMITS: {abs_crosswind:.0f} kt > 21 kt max demonstrated")
-            print("   Runway may not be suitable for SR22T operations")
+            LOGGER.warning(
+                "Crosswind exceeds demonstrated limit: %.0f kt > 21 kt",
+                abs_crosswind,
+            )
 
         # Issue warnings for conditions requiring increased heading accuracy
         # WHY WARNINGS: High winds amplify small heading errors into large performance errors
         if wind_speed >= 20:
-            print(f"⚠️ Strong winds detected ({wind_speed} kt) - verify magnetic heading accuracy")
+            LOGGER.info("Strong winds detected (%s kt) - verify runway heading accuracy", wind_speed)
         elif abs_crosswind >= 10:
-            print(f"⚠️ Significant crosswind ({abs_crosswind:.0f} kt) - verify magnetic heading accuracy")
-
-        return {
-            'headwind': round(headwind),                    # Positive=headwind, negative=tailwind
-            'crosswind': round(abs_crosswind),             # Always positive magnitude
-            'crosswind_direction': 'right' if crosswind > 0 else 'left',  # Direction for pilot awareness
-            'is_tailwind': headwind < 0,                   # Boolean flag for performance chart selection
-            'crosswind_exceeds_limits': crosswind_exceeds_limits  # Boolean flag for runway suitability
-        }
+            LOGGER.info(
+                "Significant crosswind (%.0f kt) - verify runway heading accuracy",
+                abs_crosswind,
+            )
+        return WindComponents(
+            headwind=round(headwind),
+            crosswind=round(abs_crosswind),
+            crosswind_direction='right' if crosswind > 0 else 'left',
+            is_tailwind=headwind < 0,
+            crosswind_exceeds_limits=crosswind_exceeds_limits,
+        )
 
     def _test_wind_component_calculation(self):
         """
@@ -327,7 +326,7 @@ class PerformanceCalculator:
         assert abs(result['headwind']) < 1, f"Angle normalization headwind test failed"
         assert result['crosswind'] == 10, f"Angle normalization crosswind test failed"
 
-        print("✅ Wind component calculation tests passed")
+        LOGGER.debug("Wind component calculation tests passed")
 
     def check_runway_surface_suitability(self, surface_type):
         """
@@ -360,9 +359,9 @@ class PerformanceCalculator:
         is_soft_surface = any(soft in surface_lower for soft in soft_surfaces)
 
         if is_soft_surface:
-            print(f"🚨 SOFT FIELD DETECTED: {surface_type}")
-            print("   Performance calculations assume hard surface runway")
-            print("   Soft field operations require pilot evaluation and different techniques")
+            LOGGER.warning("Soft field detected: %s", surface_type)
+            LOGGER.warning("Performance calculations assume a hard surface runway")
+            LOGGER.warning("Soft field operations require pilot evaluation and different techniques")
             return {
                 'suitable_for_standard_performance': False,
                 'surface_type': surface_type,
@@ -379,8 +378,8 @@ class PerformanceCalculator:
             }
         else:
             # Unknown surface type - conservative approach
-            print(f"⚠️ UNKNOWN SURFACE TYPE: {surface_type}")
-            print("   Assuming hard surface but recommend pilot verification")
+            LOGGER.info("Unknown surface type: %s", surface_type)
+            LOGGER.info("Assuming hard surface but recommend pilot verification")
             return {
                 'suitable_for_standard_performance': True,
                 'surface_type': surface_type,
@@ -430,35 +429,47 @@ class PerformanceCalculator:
         gs_91 = tas_91 - headwind_kt
         gs_120 = tas_120 - headwind_kt
 
-        print("Climb calculations:")
-        print("  91 KIAS: " + str(round(tas_91, 1)) + " KTAS, " + str(round(gs_91, 1)) + " kt GS")
-        print("  120 KIAS: " + str(round(tas_120, 1)) + " KTAS, " + str(round(gs_120, 1)) + " kt GS")
+        LOGGER.debug(
+            "Climb calculations: 91 KIAS %.1f KTAS / %.1f GS, 120 KIAS %.1f KTAS / %.1f GS",
+            tas_91,
+            gs_91,
+            tas_120,
+            gs_120,
+        )
 
         # Interpolate climb gradients from POH data with error handling
         # WHY TRY/EXCEPT: POH data may not cover extreme conditions, graceful degradation required
         try:
-            gradient_91 = self._interpolate_climb_gradient(pressure_altitude_ft, temperature_c, 'takeoff_climb_gradient_91')
-            print("  91 KIAS gradient: " + str(round(gradient_91, 0)) + " ft/NM")
+            gradient_91 = self._interpolate_climb_gradient(
+                pressure_altitude_ft,
+                temperature_c,
+                'takeoff_climb_gradient_91'
+            )
+            LOGGER.debug("91 KIAS gradient: %.0f ft/NM", gradient_91)
         except Exception as e:
             gradient_91 = None
-            print("  91 KIAS gradient error: " + str(e))
+            LOGGER.warning("Failed to interpolate 91 KIAS gradient: %s", e)
 
         try:
-            gradient_120 = self._interpolate_climb_gradient(pressure_altitude_ft, temperature_c, 'enroute_climb_gradient_120')
-            print("  120 KIAS gradient: " + str(round(gradient_120, 0)) + " ft/NM (POH data)")
+            gradient_120 = self._interpolate_climb_gradient(
+                pressure_altitude_ft,
+                temperature_c,
+                'enroute_climb_gradient_120'
+            )
+            LOGGER.debug("120 KIAS gradient: %.0f ft/NM (POH)", gradient_120)
         except Exception as e:
             gradient_120 = None
-            print("  120 KIAS gradient error: " + str(e))
+            LOGGER.warning("Failed to interpolate 120 KIAS gradient: %s", e)
 
-        return {
-            'tas_91': round(tas_91, 1),      # True airspeed at 91 KIAS
-            'gs_91': round(gs_91, 1),        # Ground speed at 91 KIAS
-            'gradient_91': gradient_91,      # Climb gradient at 91 KIAS (ft/NM)
-            'tas_120': round(tas_120, 1),    # True airspeed at 120 KIAS
-            'gs_120': round(gs_120, 1),      # Ground speed at 120 KIAS
-            'gradient_120': gradient_120,    # Climb gradient at 120 KIAS (ft/NM)
-            'climb_rate_91kias': gradient_91 # Store for CAPS calculations
-        }
+        return ClimbGradientSummary(
+            tas_91=round(tas_91, 1),
+            gs_91=round(gs_91, 1),
+            gradient_91=gradient_91,
+            tas_120=round(tas_120, 1),
+            gs_120=round(gs_120, 1),
+            gradient_120=gradient_120,
+            climb_rate_91kias=gradient_91,
+        )
 
     def _test_climb_gradient_calculation(self):
         """
@@ -491,7 +502,7 @@ class PerformanceCalculator:
         # Ground speed should be 10 kt less with 10 kt headwind
         assert result_headwind['gs_91'] == result_no_wind['gs_91'] - 10, f"Headwind ground speed calculation failed"
 
-        print("✅ Climb gradient calculation tests passed")
+        LOGGER.debug("Climb gradient calculation tests passed")
 
     def _interpolate_climb_gradient(self, pressure_altitude, temperature, gradient_type):
         """
@@ -609,20 +620,26 @@ class PerformanceCalculator:
         low_data = next(c for c in perf_data if c['pressure_altitude_ft'] == pa_low)
         high_data = next(c for c in perf_data if c['pressure_altitude_ft'] == pa_high)
 
-        result = {}
+        metrics = {}
         for metric in ['ground_roll_ft', 'total_distance_ft']:
             low_val = self._interpolate_temperature(temperature, low_data['performance'], metric)
             high_val = self._interpolate_temperature(temperature, high_data['performance'], metric)
 
             if pa_low == pa_high:
-                result[metric] = low_val
+                interpolated = low_val
             else:
                 pa_fraction = (pressure_altitude - pa_low) / (pa_high - pa_low)
-                result[metric] = low_val + pa_fraction * (high_val - low_val)
+                interpolated = low_val + pa_fraction * (high_val - low_val)
 
-            result[metric] = round(result[metric] / Config.PERFORMANCE_DISTANCE_ROUND) * Config.PERFORMANCE_DISTANCE_ROUND
+            metrics[metric] = round(
+                interpolated / Config.PERFORMANCE_DISTANCE_ROUND
+            ) * Config.PERFORMANCE_DISTANCE_ROUND
 
-        return result
+        performance_cls = TakeoffPerformance if performance_type == 'takeoff_distance' else LandingPerformance
+        return performance_cls(
+            ground_roll_ft=int(metrics['ground_roll_ft']),
+            total_distance_ft=int(metrics['total_distance_ft']),
+        )
 
     def _interpolate_temperature(self, temperature, temp_data, metric):
         """Interpolate across temperature"""
@@ -671,57 +688,35 @@ class PerformanceCalculator:
         TESTING PHILOSOPHY: Test safety-critical calculations comprehensively,
         skip trivial operations that don't affect flight safety.
         """
-        print("\\n" + "="*60)
-        print("🔬 RUNNING SAFETY-CRITICAL PERFORMANCE CALCULATOR TESTS")
-        print("="*60)
-        print("Testing all aviation calculations that affect flight safety...")
-        print("These tests verify pressure altitude, density altitude, wind components,")
-        print("and climb gradient calculations against known aviation formulas.")
-        print("\\n⚠️  If any test fails, DO NOT USE for flight planning!")
-        print("-"*60)
-
         try:
             # Test pressure altitude calculations (affects all performance lookups)
-            print("\\n1️⃣ Testing Pressure Altitude Calculations...")
+            LOGGER.info("Testing pressure altitude calculations")
             self._test_pressure_altitude_calculation()
 
             # Test ISA temperature calculations (used in density altitude)
-            print("\\n2️⃣ Testing ISA Temperature Calculations...")
+            LOGGER.info("Testing ISA temperature calculations")
             self._test_isa_temperature_calculation()
 
             # Test density altitude calculations (affects aircraft performance)
-            print("\\n3️⃣ Testing Density Altitude Calculations...")
+            LOGGER.info("Testing density altitude calculations")
             self._test_density_altitude_calculation()
 
             # Test wind component calculations (affects runway performance)
-            print("\\n4️⃣ Testing Wind Component Calculations...")
+            LOGGER.info("Testing wind component calculations")
             self._test_wind_component_calculation()
 
             # Test climb gradient calculations (affects obstacle clearance)
-            print("\\n5️⃣ Testing Climb Gradient Calculations...")
+            LOGGER.info("Testing climb gradient calculations")
             self._test_climb_gradient_calculation()
 
-            print("\\n" + "="*60)
-            print("✅ ALL SAFETY-CRITICAL TESTS PASSED!")
-            print("✈️ Performance calculator is ready for flight planning use.")
-            print("🔬 " + str(5) + " test categories completed successfully.")
-            print("="*60)
+            LOGGER.info("All safety-critical performance calculator tests passed")
 
         except AssertionError as e:
-            print("\\n" + "🚨"*20)
-            print("❌ SAFETY-CRITICAL TEST FAILURE!")
-            print(f"💥 Test failed: {e}")
-            print("⛔ DO NOT USE CALCULATOR FOR FLIGHT PLANNING!")
-            print("🔧 Fix the issue before using this tool for aviation.")
-            print("🚨"*20)
+            LOGGER.error("Safety-critical test failure: %s", e)
             raise
 
         except Exception as e:
-            print("\\n" + "⚠️ "*20)
-            print("❓ UNEXPECTED TEST ERROR!")
-            print(f"💥 Error: {e}")
-            print("🔍 Check implementation for bugs.")
-            print("⚠️ "*20)
+            LOGGER.exception("Unexpected test error: %s", e)
             raise
 
     def calculate_v_speeds(self, wind_dir, wind_speed, wind_gust=None, aircraft_weight_lb=3600):
@@ -803,11 +798,11 @@ class PerformanceCalculator:
         if gust_correction > 0:
             speed_control_guidance.append(f"Gust Correction: +{gust_correction} kt added for {gust_factor} kt gust factor")
 
-        print(f"🎯 V-speeds calculated for SR22T operations")
+        LOGGER.info("Calculated V-speeds for SR22T operations")
         if gust_correction > 0:
-            print(f"   💨 Wind: {wind_speed}G{wind_gust} kt - gust correction applied")
+            LOGGER.info("Wind %sG%s kt - gust correction applied", wind_speed, wind_gust)
         if use_partial_flaps:
-            print(f"   🌪️ Crosswind detected - 50% flaps recommended")
+            LOGGER.info("Crosswind detected - 50%% flaps recommended")
 
         return {
             # Takeoff speeds

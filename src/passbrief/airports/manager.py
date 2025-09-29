@@ -23,16 +23,27 @@ WHERE: Positive variation = East (subtract from true to get magnetic)
        Negative variation = West (add to true to get magnetic)
 """
 
+from __future__ import annotations
+
+import csv
+import logging
 import requests
 import time
 from datetime import datetime
+from io import StringIO
+from typing import Optional
 
+from ..io import ConsoleIO
+
+
+LOGGER = logging.getLogger(__name__)
 
 class AirportManager:
     """Manages airport and runway data with accurate magnetic variation handling."""
 
     # Class variable to track magnetic variation data source
     _last_mag_var_source = 'UNKNOWN'
+    _io = ConsoleIO()
 
     @staticmethod
     def _calculate_magnetic_variation(lat, lon, date=None):
@@ -85,9 +96,9 @@ class AirportManager:
             for attempt in range(2):
                 try:
                     if attempt == 0:
-                        print(f"   🌐 Requesting WMM2025 data from NOAA API...")
+                        AirportManager._io.info(f"   🌐 Requesting WMM2025 data from NOAA API...")
                     else:
-                        print(f"   🔄 Retrying NOAA API (attempt {attempt + 1}/2)...")
+                        AirportManager._io.info(f"   🔄 Retrying NOAA API (attempt {attempt + 1}/2)...")
 
                     response = requests.get(api_url, params=params, timeout=5)
 
@@ -95,7 +106,7 @@ class AirportManager:
                         data = response.json()
                         if 'result' in data and len(data['result']) > 0:
                             declination = data['result'][0]['declination']
-                            print(f"   🧭 Using NOAA WMM2025: Magnetic declination {declination:+.2f}° at {lat:.3f}, {lon:.3f}")
+                            AirportManager._io.info(f"   🧭 Using NOAA WMM2025: Magnetic declination {declination:+.2f}° at {lat:.3f}, {lon:.3f}")
                             # Store source for automatic heading calculations
                             AirportManager._last_mag_var_source = 'NOAA_WMM'
                             return declination
@@ -106,29 +117,29 @@ class AirportManager:
 
                 except requests.exceptions.Timeout:
                     if attempt == 0:
-                        print(f"   ⏱️ API timeout (5s) - retrying...")
+                        AirportManager._io.info(f"   ⏱️ API timeout (5s) - retrying...")
                         time.sleep(1)  # Brief pause before retry
                     else:
                         raise Exception("API timeout after 2 attempts")
 
                 except Exception as api_error:
                     if attempt == 0:
-                        print(f"   ⚠️ API error: {api_error} - retrying...")
+                        AirportManager._io.info(f"   ⚠️ API error: {api_error} - retrying...")
                         time.sleep(1)  # Brief pause before retry
                     else:
                         raise Exception(f"API failed after 2 attempts: {api_error}")
 
         except Exception as e:
-            print(f"   ❌ NOAA WMM API unavailable after retries - falling back to manual input")
-            print(f"   🔍 Error: {e}")
+            AirportManager._io.info(f"   ❌ NOAA WMM API unavailable after retries - falling back to manual input")
+            AirportManager._io.info(f"   🔍 Error: {e}")
 
         # TIER 2: Manual input from pilot using NOAA calculator
-        print(f"   📍 Location: {lat:.4f}, {lon:.4f}")
-        print(f"   💡 Get accurate value from: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml")
+        AirportManager._io.info(f"   📍 Location: {lat:.4f}, {lon:.4f}")
+        AirportManager._io.info(f"   💡 Get accurate value from: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml")
 
         try:
-            user_mag_var = float(input(f"   Enter magnetic variation for this location (degrees, + for East, - for West): "))
-            print(f"   🧭 Using Manual Input: Magnetic declination {user_mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
+            user_mag_var = float(AirportManager._io.prompt(f"   Enter magnetic variation for this location (degrees, + for East, - for West): "))
+            AirportManager._io.info(f"   🧭 Using Manual Input: Magnetic declination {user_mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
             # Store source for heading calculations
             AirportManager._last_mag_var_source = 'MANUAL_INPUT'
             return user_mag_var
@@ -181,9 +192,9 @@ class AirportManager:
         # WHY CLAMP: Prevents obviously wrong results from calculation errors
         mag_var = max(-25, min(20, mag_var))  # CONUS variation range is roughly -20° to +17°
 
-        print(f"   ⚠️ WARNING: Using regional approximation: {mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
-        print(f"   🚨 For aviation safety, verify with NOAA calculator!")
-        print(f"   📏 Accuracy: ±3-5° (acceptable for low wind, verify for high wind)")
+        AirportManager._io.info(f"   ⚠️ WARNING: Using regional approximation: {mag_var:+.2f}° at {lat:.3f}, {lon:.3f}")
+        AirportManager._io.info(f"   🚨 For aviation safety, verify with NOAA calculator!")
+        AirportManager._io.info(f"   📏 Accuracy: ±3-5° (acceptable for low wind, verify for high wind)")
         # Store source for heading calculations
         AirportManager._last_mag_var_source = 'REGIONAL_APPROX'
         return mag_var
@@ -219,29 +230,29 @@ class AirportManager:
         try:
             # Auto-use computed magnetic heading when we have accurate NOAA data
             if AirportManager._last_mag_var_source == 'NOAA_WMM':
-                print(f"   ✅ Auto-using accurate magnetic heading: {default_magnetic:03d}° (NOAA WMM data)")
+                AirportManager._io.info(f"   ✅ Auto-using accurate magnetic heading: {default_magnetic:03d}° (NOAA WMM data)")
                 return default_magnetic
             else:
                 # Prompt for verification when using regional approximation or manual input
-                user_input = input(f"Runway {runway} magnetic heading [{default_magnetic:03d}°]: ").strip()
+                user_input = AirportManager._io.prompt(f"Runway {runway} magnetic heading [{default_magnetic:03d}°]: ").strip()
 
                 if not user_input:
                     # User pressed Enter - accept calculated default
-                    print(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
+                    AirportManager._io.info(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
                     return default_magnetic
                 else:
                     # User entered a value - validate and use
                     user_heading = int(user_input)
                     if 0 <= user_heading <= 360:
-                        print(f"   ✅ Using pilot-verified magnetic heading: {user_heading:03d}°")
+                        AirportManager._io.info(f"   ✅ Using pilot-verified magnetic heading: {user_heading:03d}°")
                         return user_heading
                     else:
-                        print(f"   ⚠️ Invalid heading {user_heading}°, using calculated {default_magnetic:03d}°")
+                        AirportManager._io.info(f"   ⚠️ Invalid heading {user_heading}°, using calculated {default_magnetic:03d}°")
                         return default_magnetic
 
         except (ValueError, EOFError):
             # Handle input errors gracefully
-            print(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
+            AirportManager._io.info(f"   ✅ Using calculated magnetic heading: {default_magnetic:03d}°")
             return default_magnetic
 
     @staticmethod
@@ -294,7 +305,7 @@ class AirportManager:
         where TRUE and MAGNETIC headings were mixed. These tests verify the conversion
         formulas work correctly with known magnetic variation values.
         """
-        print("🧭 Testing magnetic variation conversion formulas...")
+        AirportManager._io.info("🧭 Testing magnetic variation conversion formulas...")
 
         # Test case 1: Eastern US location (negative/westerly variation)
         # Known: Boston area has approximately -14° variation
@@ -352,7 +363,7 @@ class AirportManager:
             var = AirportManager._regional_approximation(lat, lon)
             assert -25 <= var <= 20, f"Variation {var}° outside CONUS bounds at {lat}, {lon}"
 
-        print("✅ Magnetic variation system tests passed")
+        AirportManager._io.info("✅ Magnetic variation system tests passed")
 
     def run_magnetic_variation_tests(self):
         """
@@ -365,44 +376,44 @@ class AirportManager:
         USAGE: Call this method to verify magnetic variation calculations
         Example: AirportManager().run_magnetic_variation_tests()
         """
-        print("\\n" + "="*60)
-        print("🧭 RUNNING MAGNETIC VARIATION SAFETY TESTS")
-        print("="*60)
-        print("Testing TRUE→MAGNETIC conversion formulas that fix the critical")
-        print("reference system bug (OurAirports TRUE vs METAR MAGNETIC)...")
-        print("\\n⚠️  If any test fails, magnetic heading conversions are incorrect!")
-        print("-"*60)
+        AirportManager._io.info("\\n" + "="*60)
+        AirportManager._io.info("🧭 RUNNING MAGNETIC VARIATION SAFETY TESTS")
+        AirportManager._io.info("="*60)
+        AirportManager._io.info("Testing TRUE→MAGNETIC conversion formulas that fix the critical")
+        AirportManager._io.info("reference system bug (OurAirports TRUE vs METAR MAGNETIC)...")
+        AirportManager._io.info("\\n⚠️  If any test fails, magnetic heading conversions are incorrect!")
+        AirportManager._io.info("-"*60)
 
         try:
             self._test_magnetic_variation_system()
 
-            print("\\n" + "="*60)
-            print("✅ ALL MAGNETIC VARIATION TESTS PASSED!")
-            print("🧭 TRUE→MAGNETIC conversion system is working correctly.")
-            print("🔒 Mixed reference system bug is properly fixed.")
-            print("="*60)
+            AirportManager._io.info("\\n" + "="*60)
+            AirportManager._io.info("✅ ALL MAGNETIC VARIATION TESTS PASSED!")
+            AirportManager._io.info("🧭 TRUE→MAGNETIC conversion system is working correctly.")
+            AirportManager._io.info("🔒 Mixed reference system bug is properly fixed.")
+            AirportManager._io.info("="*60)
 
         except AssertionError as e:
-            print("\\n" + "🚨"*20)
-            print("❌ MAGNETIC VARIATION TEST FAILURE!")
-            print(f"💥 Test failed: {e}")
-            print("⛔ TRUE→MAGNETIC conversions are incorrect!")
-            print("🔧 Fix magnetic variation calculations before use!")
-            print("🚨"*20)
+            AirportManager._io.info("\\n" + "🚨"*20)
+            AirportManager._io.error("❌ MAGNETIC VARIATION TEST FAILURE!")
+            AirportManager._io.info(f"💥 Test failed: {e}")
+            AirportManager._io.info("⛔ TRUE→MAGNETIC conversions are incorrect!")
+            AirportManager._io.info("🔧 Fix magnetic variation calculations before use!")
+            AirportManager._io.warning("🚨"*20)
             raise
 
         except Exception as e:
-            print("\\n" + "⚠️ "*20)
-            print("❓ MAGNETIC VARIATION TEST ERROR!")
-            print(f"💥 Error: {e}")
-            print("🔍 Check magnetic variation implementation.")
-            print("⚠️ "*20)
+            AirportManager._io.info("\\n" + "⚠️ "*20)
+            AirportManager._io.info("❓ MAGNETIC VARIATION TEST ERROR!")
+            AirportManager._io.info(f"💥 Error: {e}")
+            AirportManager._io.info("🔍 Check magnetic variation implementation.")
+            AirportManager._io.warning("⚠️ "*20)
             raise
 
     @staticmethod
     def get_airport_data(icao, runway):
         """Get airport data with automatic runway lookup"""
-        print(f"\\n🔍 Looking up airport and runway data for {icao} runway {runway}...")
+        AirportManager._io.info(f"\\n🔍 Looking up airport and runway data for {icao} runway {runway}...")
 
         airport_info = AirportManager._fetch_airport_info(icao)
         if not airport_info:
@@ -417,7 +428,7 @@ class AirportManager:
                 runway, runway_info['true_heading'], airport_info['mag_var']
             )
 
-            print(f"✅ Using runway {runway}: {runway_info['length']} ft, magnetic heading {accurate_magnetic_heading}°, {runway_info['surface']}")
+            AirportManager._io.info(f"✅ Using runway {runway}: {runway_info['length']} ft, magnetic heading {accurate_magnetic_heading}°, {runway_info['surface']}")
             return {
                 'icao': icao,
                 'name': airport_info['name'],
@@ -428,7 +439,7 @@ class AirportManager:
                 'source': 'OurAirports + Verified Magnetic Heading'
             }
         else:
-            print(f"⚠️ Runway {runway} data not found online, requesting manual input...")
+            AirportManager._io.info(f"⚠️ Runway {runway} data not found online, requesting manual input...")
             runway_data = AirportManager._get_runway_data(runway)
             if runway_data:
                 return {
@@ -447,42 +458,40 @@ class AirportManager:
     def _fetch_airport_info(icao):
         """Fetch basic airport information"""
         try:
-            print(f"   📡 Fetching airport info from OurAirports...")
+            LOGGER.debug("Fetching airport info from OurAirports")
             response = requests.get("https://davidmegginson.github.io/ourairports-data/airports.csv", timeout=15)
 
             if response.status_code == 200:
-                lines = response.text.split('\\n')
-                for line in lines[1:]:
-                    if line.strip():
-                        data = line.split(',')
-                        if len(data) > 6:
-                            icao_from_csv = data[1].strip().strip('"')
-                            if icao_from_csv == icao:
-                                airport_name = data[3].strip().strip('"')
-                                lat_str = data[4].strip()
-                                lon_str = data[5].strip()
-                                elevation_str = data[6].strip()
+                reader = csv.DictReader(StringIO(response.text))
+                for row in reader:
+                    if not row:
+                        continue
+                    if row.get('ident') == icao:
+                        try:
+                            elevation_ft = int(float(row.get('elevation_ft', '') or 0))
+                            lat = float(row.get('latitude_deg', '') or 0.0)
+                            lon = float(row.get('longitude_deg', '') or 0.0)
+                        except ValueError:
+                            elevation_ft = lat = lon = None
 
-                                try:
-                                    elevation_ft = int(float(elevation_str)) if elevation_str else None
-                                    lat = float(lat_str) if lat_str else None
-                                    lon = float(lon_str) if lon_str else None
-                                except:
-                                    elevation_ft = lat = lon = None
-
-                                if elevation_ft is not None and lat is not None and lon is not None:
-                                    mag_var = AirportManager._calculate_magnetic_variation(lat, lon)
-                                    print(f"   ✅ Found {icao}: {airport_name}, elevation {elevation_ft} ft")
-                                    return {
-                                        'name': airport_name,
-                                        'elevation_ft': elevation_ft,
-                                        'lat': lat,
-                                        'lon': lon,
-                                        'mag_var': mag_var
-                                    }
+                        if elevation_ft is not None and lat is not None and lon is not None:
+                            mag_var = AirportManager._calculate_magnetic_variation(lat, lon)
+                            LOGGER.info(
+                                "Found %s: %s, elevation %s ft",
+                                icao,
+                                row.get('name', 'Unknown Airport'),
+                                elevation_ft,
+                            )
+                            return {
+                                'name': row.get('name', 'Unknown Airport'),
+                                'elevation_ft': elevation_ft,
+                                'lat': lat,
+                                'lon': lon,
+                                'mag_var': mag_var
+                            }
 
         except Exception as e:
-            print(f"   ❌ Airport lookup failed: {e}")
+            LOGGER.warning("Airport lookup failed: %s", e)
 
         return None
 
@@ -499,7 +508,7 @@ class AirportManager:
     def _fetch_ourairports_runway_data(icao, runway, mag_var):
         """Attempt to fetch runway data from OurAirports runways.csv and convert to magnetic heading"""
         try:
-            print(f"   📡 Trying OurAirports runways database...")
+            AirportManager._io.info(f"   📡 Trying OurAirports runways database...")
             response = requests.get("https://davidmegginson.github.io/ourairports-data/runways.csv", timeout=15)
 
             if response.status_code == 200:
@@ -553,7 +562,7 @@ class AirportManager:
                                                 if not surface_clean or surface_clean.lower() in ['', 'unknown']:
                                                     surface_clean = 'Asphalt'
 
-                                                print(f"   ✅ Found runway {runway}: {length_ft} ft, {true_heading}°T→{magnetic_heading}°M, {surface_clean}")
+                                                AirportManager._io.info(f"   ✅ Found runway {runway}: {length_ft} ft, {true_heading}°T→{magnetic_heading}°M, {surface_clean}")
                                                 return {
                                                     'length': length_ft,
                                                     'true_heading': true_heading,  # Keep original true heading
@@ -566,18 +575,18 @@ class AirportManager:
                             continue
 
         except Exception as e:
-            print(f"   ⚠️ OurAirports runway lookup failed: {e}")
+            AirportManager._io.info(f"   ⚠️ OurAirports runway lookup failed: {e}")
 
         return None
 
     @staticmethod
     def _get_runway_data(runway):
         """Get runway data manually"""
-        print(f"\\nManual runway {runway} data entry:")
+        AirportManager._io.info(f"\\nManual runway {runway} data entry:")
         try:
-            length = int(input("Length (ft): "))
-            heading = int(input("Magnetic heading: "))
-            surface = input("Surface [Asphalt]: ") or "Asphalt"
+            length = int(AirportManager._io.prompt("Length (ft): "))
+            heading = int(AirportManager._io.prompt("Magnetic heading: "))
+            surface = AirportManager._io.prompt("Surface [Asphalt]: ") or "Asphalt"
             return {'length': length, 'heading': heading, 'surface': surface}
         except:
             return None
@@ -585,13 +594,13 @@ class AirportManager:
     @staticmethod
     def _get_manual_data(icao, runway):
         """Get all data manually"""
-        print(f"\\nFull manual entry for {icao}:")
+        AirportManager._io.info(f"\\nFull manual entry for {icao}:")
         try:
-            name = input("Airport name: ") or icao + " Airport"
-            elevation = int(input("Field elevation (ft): "))
-            length = int(input(f"Runway {runway} length (ft): "))
-            heading = int(input(f"Runway {runway} heading: "))
-            surface = input("Surface [Asphalt]: ") or "Asphalt"
+            name = AirportManager._io.prompt("Airport name: ") or icao + " Airport"
+            elevation = int(AirportManager._io.prompt("Field elevation (ft): "))
+            length = int(AirportManager._io.prompt(f"Runway {runway} length (ft): "))
+            heading = int(AirportManager._io.prompt(f"Runway {runway} heading: "))
+            surface = AirportManager._io.prompt("Surface [Asphalt]: ") or "Asphalt"
 
             return {
                 'icao': icao, 'name': name, 'elevation_ft': elevation,
