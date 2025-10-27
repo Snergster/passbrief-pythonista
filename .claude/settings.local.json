@@ -1,26 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git --version)",
-      "Bash(python3:*)",
-      "WebFetch(domain:ourairports.com)",
-      "WebSearch",
-      "Bash(pip3 install:*)",
-      "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:plan.foreflight.com)",
-      "WebFetch(domain:www.ngdc.noaa.gov)",
-      "WebFetch(domain:www.faa.gov)",
-      "WebFetch(domain:skyvector.com)",
-      "Bash(claude doctor)",
-      "Bash(claude --version)",
-      "Read(//usr/local/lib/node_modules/@anthropic-ai/claude-code/**)",
-      "Bash(claude migrate-installer:*)",
-      "Bash(timeout:*)",
-      "Bash(mv:*)",
-      "Bash(git checkout:*)",
-      "Bash(tree:*)",
-      "Bash(git add:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nComplete modular refactoring and development infrastructure\n\n- Refactored monolithic sr22t_briefing_v31.py into modular architecture\n- Created separate modules: io, logging_utils, models, airports, weather, performance, briefing, garmin\n- Added comprehensive TODO.md with development roadmap\n- Enhanced documentation with onboarding guide and web app PRD\n- Cleaned up __pycache__ files and improved code organization\n- Updated artifacts with latest refactored code\n- Improved test coverage and module structure\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+      "Bash(powershell -Command \"Get-ChildItem -Path ''skills/runway-brief.zip'' | ForEach-Object { [System.IO.Compression.ZipFile]::OpenRead($_FullName).Entries.FullName } | Select-Object -First 10\")",
+      "Bash(powershell -Command:*)",
+      "Bash(unzip:*)"
     ],
     "deny": [],
     "ask": []
