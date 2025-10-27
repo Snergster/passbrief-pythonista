@@ -3,7 +3,8 @@
     "allow": [
       "Bash(powershell -Command \"Get-ChildItem -Path ''skills/runway-brief.zip'' | ForEach-Object { [System.IO.Compression.ZipFile]::OpenRead($_FullName).Entries.FullName } | Select-Object -First 10\")",
       "Bash(powershell -Command:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
